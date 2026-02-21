@@ -206,6 +206,132 @@ function mergeArchive(prev: OrderDoc[], incoming: OrderDoc[]) {
   return Array.from(map.values()).sort((a, b) => (b.updatedAtISO || "").localeCompare(a.updatedAtISO || ""));
 }
 
+// ================= PDF ENGINE =================
+import jsPDF from "jspdf";
+
+type PdfMode = "client" | "production";
+
+function buildOrderPdf(
+  mode: PdfMode,
+  clubName: string,
+  customerName: string,
+  totalPieces: number,
+  items: any[],
+  conditionsText?: string
+) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+  const margin = 40;
+  let y = 50;
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  const isClient = mode === "client";
+
+  // ===== HEADER =====
+  doc.setFillColor(isClient ? 11 : 6, isClient ? 31 : 78, isClient ? 59 : 59);
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 60, 12, 12, "F");
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+
+  doc.text(
+    isClient ? "DOUBLEU · BOZZA CONFERMA ORDINE" : "DOUBLEU · ORDINE PRODUZIONE",
+    margin + 20,
+    y + 38
+  );
+
+  y += 90;
+
+  // ===== INFO BOX =====
+  doc.setFillColor(245, 245, 245);
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 70, 12, 12, "F");
+
+  doc.setTextColor(20, 20, 20);
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "normal");
+
+  doc.text(`Club: ${clubName || "-"}`, margin + 20, y + 25);
+  doc.text(`Data: ${new Date().toLocaleDateString()}`, margin + 20, y + 45);
+  doc.text(`Totale pezzi: ${totalPieces}`, pageWidth - margin - 160, y + 25);
+
+  if (!isClient) {
+    doc.setFont("helvetica", "bold");
+    doc.text(`Cliente: ${customerName || "-"}`, pageWidth - margin - 220, y + 45);
+  }
+
+  y += 100;
+
+  // ===== ITEMS =====
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Riepilogo articoli", margin, y);
+  y += 20;
+
+  items.forEach((item, index) => {
+    if (y > 750) {
+      doc.addPage();
+      y = 60;
+    }
+
+    doc.setDrawColor(230);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(margin, y, pageWidth - margin * 2, 90, 12, 12, "FD");
+
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${index + 1}. ${item.description || "-"}`, margin + 20, y + 30);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+
+    doc.text(
+      `Linea: ${item.line}  ·  Colore: ${item.color}`,
+      margin + 20,
+      y + 50
+    );
+
+    const sizeString = Object.entries(item.sizes || {})
+      .filter(([_, v]) => Number(v) > 0)
+      .map(([k, v]) => `${k}:${v}`)
+      .join("   ");
+
+    doc.text(`Taglie: ${sizeString || "-"}`, margin + 20, y + 70);
+
+    y += 110;
+  });
+
+  // ===== CONDITIONS (solo cliente) =====
+  if (isClient && conditionsText) {
+    if (y > 650) {
+      doc.addPage();
+      y = 60;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("Condizioni Generali di Vendita", margin, y);
+    y += 15;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+
+    const split = doc.splitTextToSize(
+      conditionsText,
+      pageWidth - margin * 2
+    );
+    doc.text(split, margin, y + 15);
+  }
+
+  const filename =
+    mode === "client"
+      ? `Ordine_${clubName}_CLIENTE.pdf`
+      : `Ordine_${clubName}_PRODUZIONE.pdf`;
+
+  doc.save(filename);
+}
+// ================= END PDF ENGINE =================
 export default function App() {
   const [archive, setArchive] = useState<OrderDoc[]>([]);
   const [showArchive, setShowArchive] = useState(false);
@@ -757,7 +883,245 @@ export default function App() {
   }
 
   // ===== PDF PRODUZIONE (stesso stile Cliente) =====
+    // ===== PDF PRODUZIONE (stesso stile Cliente, colori diversi) =====
   async function generateProductionPDF(mode: "download" | "print") {
+    if (!ensureBasics()) return;
+
+    try {
+      const jsPDF = await pdf();
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+      const pageW = 595;
+      const pageH = 842;
+      const margin = 40;
+      const contentW = pageW - margin * 2;
+
+      const DATE_STR = formatDateIT(new Date());
+
+      // Palette "produzione" (diversa dal cliente, stessa grafica)
+      const BRAND = {
+        navy: [12, 35, 64] as [number, number, number],
+        ink: [18, 24, 34] as [number, number, number],
+        muted: [110, 120, 135] as [number, number, number],
+        line: [230, 235, 242] as [number, number, number],
+        card: [245, 247, 251] as [number, number, number],
+        accent: [18, 102, 241] as [number, number, number], // blu vivo
+      };
+
+      const roundRect = (
+        x: number,
+        y: number,
+        w: number,
+        h: number,
+        r: number,
+        fill: boolean,
+        stroke: boolean
+      ) => {
+        // @ts-ignore
+        doc.roundedRect(x, y, w, h, r, r, fill ? "F" : stroke ? "S" : undefined);
+      };
+
+      const setFill = (rgb: [number, number, number]) => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+      const setText = (rgb: [number, number, number]) => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
+      const setDraw = (rgb: [number, number, number]) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
+
+      // Header
+      const headerH = 88;
+      setFill(BRAND.navy);
+      doc.rect(0, 0, pageW, headerH, "F");
+
+      setText([255, 255, 255]);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text("DOUBLEU · ORDINE PRODUZIONE", margin, 38);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.text(`Cliente: ${order.club || "-"}`, margin, 62);
+      doc.text(`Data: ${DATE_STR}`, pageW - margin, 62, { align: "right" });
+
+      // Blocchi meta
+      let y = headerH + 18;
+
+      const cardGap = 12;
+      const cardR = 12;
+
+      const card = (title: string, left: number, top: number, w: number, h: number) => {
+        setFill(BRAND.card);
+        setDraw(BRAND.line);
+        // bordo leggero
+        // @ts-ignore
+        doc.setLineWidth(1);
+        // @ts-ignore
+        doc.roundedRect(left, top, w, h, cardR, cardR, "FD");
+
+        setText(BRAND.ink);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text(title, left + 14, top + 22);
+      };
+
+      const totalPieces = computeTotalPieces(order);
+
+      card("Riepilogo", margin, y, contentW, 68);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      setText(BRAND.ink);
+      doc.text(`Totale pezzi: ${totalPieces}`, margin + 14, y + 46);
+
+      y += 68 + 14;
+
+      // Note produzione (interne) — se le hai già in order.notesProduction / simile
+      // Non tocco la tua struttura: provo a leggere alcune chiavi comuni.
+      const prodNotes =
+        (order as any).notesProduction ||
+        (order as any).productionNotes ||
+        (order as any).notes_production ||
+        "";
+
+      if (prodNotes && String(prodNotes).trim().length > 0) {
+        const boxH = 92;
+        card("Note produzione (interne)", margin, y, contentW, boxH);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        setText(BRAND.muted);
+
+        const maxW = contentW - 28;
+        const lines = doc.splitTextToSize(String(prodNotes), maxW);
+        doc.text(lines, margin + 14, y + 44);
+
+        y += boxH + 14;
+      }
+
+      // Lista articoli (stesso layout del cliente: cards)
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      setText(BRAND.ink);
+      doc.text("Articoli", margin, y + 6);
+      y += 16;
+
+      const itemCardHBase = 112;
+      const perRow = 3;
+
+      const drawQtyChip = (x: number, y: number, label: string, value: number) => {
+        const w = 54;
+        const h = 30;
+
+        setFill([255, 255, 255]);
+        setDraw(BRAND.line);
+        // @ts-ignore
+        doc.roundedRect(x, y, w, h, 10, 10, "FD");
+
+        // label
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        setText(BRAND.muted);
+        doc.text(label, x + w / 2, y + 12, { align: "center" });
+
+        // value
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(14);
+        setText(BRAND.ink);
+        doc.text(String(value), x + w / 2, y + 25, { align: "center" });
+      };
+
+      for (let idx = 0; idx < order.items.length; idx++) {
+        const it = order.items[idx];
+
+        // se stai usando "set" felpa+pantalone, nel tuo codice gli item arrivano duplicati:
+        // qui li stampo così come sono (come cliente), con stesse info.
+        const name = it.description || it.category || "Articolo";
+        const meta = `${labelCategory(it.category)} · ${labelLine(it.line)} · Colore: ${it.color || "-"}`;
+        const du = it.du || ""; // DU interno ok
+        const total = computeItemTotal(it);
+
+        // calcolo altezza dinamica: se molte taglie, metto a capo
+        const sizes = orderedSizes();
+        const nonZero = sizes.filter((k) => (it.sizes?.[k] || 0) > 0);
+        const rows = Math.ceil(nonZero.length / perRow) || 1;
+        const cardH = itemCardHBase + (rows - 1) * 34;
+
+        // nuova pagina se serve
+        if (y + cardH + 40 > pageH) {
+          doc.addPage();
+          y = 40;
+        }
+
+        // Card
+        setFill([255, 255, 255]);
+        setDraw(BRAND.line);
+        // @ts-ignore
+        doc.roundedRect(margin, y, contentW, cardH, 14, 14, "FD");
+
+        // barra accent
+        setFill(BRAND.accent);
+        // @ts-ignore
+        doc.roundedRect(margin, y, contentW, 10, 14, 14, "F");
+
+        // Titolo
+        setText(BRAND.ink);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.text(name, margin + 14, y + 30);
+
+        // Meta
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        setText(BRAND.muted);
+        doc.text(meta, margin + 14, y + 48);
+
+        // Riga DU e totale
+        setText(BRAND.ink);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        const leftLine = du ? `DU: ${du}` : "DU: -";
+        doc.text(leftLine, margin + 14, y + 68);
+        doc.text(`Totale: ${total}`, margin + 140, y + 68);
+
+        // Quantità per taglia (chips)
+        const startX = margin + 14;
+        let chipY = y + 78;
+        let col = 0;
+
+        const list = nonZero.length ? nonZero : sizes.slice(0, 3); // fallback
+
+        for (const k of list) {
+          const v = it.sizes?.[k] || 0;
+          if (!nonZero.length) continue; // se fallback e tutte 0, non stampo
+          drawQtyChip(startX + col * 64, chipY, k, v);
+          col++;
+          if (col >= perRow) {
+            col = 0;
+            chipY += 34;
+          }
+        }
+
+        y += cardH + 12;
+      }
+
+      // Footer
+      const footerY = pageH - 28;
+      setText(BRAND.muted);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text("Documento interno di produzione", margin, footerY);
+
+      const FILE_BASE = `Ordine_${(order.club || "cliente").replaceAll(" ", "_")}_PRODUZIONE_${DATE_STR.replaceAll(
+        "/",
+        "-"
+      )}`;
+
+      if (mode === "download") {
+        doc.save(`${FILE_BASE}.pdf`);
+      } else {
+        openBlobForPrint(doc, `${FILE_BASE}.pdf`);
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Errore PDF Produzione. Controlla che 'jspdf' sia installato.");
+    }
+  }
     if (!ensureBasics()) return;
 
     try {
@@ -1647,7 +2011,7 @@ const modalBtnPrimary: CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
   border: "none",
-  background: "#0B1F3B",
+background: `rgb(11, 31, 59)`,
   color: "white",
   cursor: "pointer",
   fontWeight: 900
@@ -1656,7 +2020,7 @@ const modalBtnPrimary: CSSProperties = {
 const modalBtn: CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
-  border: "1px solid #E5E7EB",
+ border: `1px solid rgb(229, 231, 235)`,
   background: "white",
   cursor: "pointer",
   fontWeight: 900
