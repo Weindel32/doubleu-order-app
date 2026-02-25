@@ -1,2027 +1,904 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import "./App.css";
+import jsPDF from "jspdf";
 
-type Line = "PERF" | "ESS";
-type Category = "TSH" | "SHO" | "SWE" | "TRK" | "SKT" | "DRS" | "POL" | "CNT";
-type Status = "DRAFT" | "CONFIRMED";
+type OrderStatus = "BOZZA" | "CONFERMATO";
 
-type SizeKey =
-  | "4" | "6" | "8" | "10" | "12" | "14" | "16"
-  | "XS" | "S" | "M" | "L" | "XL" | "XXL";
+type SizeChild = "4" | "6" | "8" | "10" | "12" | "14" | "16";
+type SizeAdult = "XS" | "S" | "M" | "L" | "XL" | "XXL";
+type SizeKey = SizeChild | SizeAdult;
 
-type SizeTable = Record<SizeKey, number>;
+const CHILD_SIZES: SizeChild[] = ["4", "6", "8", "10", "12", "14", "16"];
+const ADULT_SIZES: SizeAdult[] = ["XS", "S", "M", "L", "XL", "XXL"];
+const ALL_SIZES: SizeKey[] = [...CHILD_SIZES, ...ADULT_SIZES];
 
 type ClientInfo = {
   name: string;
   address: string;
   city: string;
-  zip: string;
+  cap: string;
   country: string;
   email: string;
 };
 
-type OrderItem = {
+type Item = {
   id: string;
-  sp: string; // interno (modellista)
-  du: string; // interno/gestionale
-  category: Category;
-  line: Line;
+  codeSP: string; // SOLO produzione
+  category: string;
+  line: string;
   description: string;
   color: string;
-  sizes: SizeTable;
-  productionNote: string; // note per produzione (per articolo)
+  productionNote: string; // nota per articolo (interna)
+  qty: Record<SizeKey, number>;
 };
 
-type OrderDoc = {
-  orderId: string; // interno
-  status: Status;
-  club: string;
+type Order = {
+  internalId: string; // DU-2026-0001
+  status: OrderStatus;
   createdAtISO: string;
   updatedAtISO: string;
 
-  client: ClientInfo; // facoltativo (A)
+  club: string;
 
-  // PDF Cliente
-  clientNote: string;
-  conditions: string;
+  client: ClientInfo;
+  clientNote: string; // note per cliente (pdf cliente)
+  productionGeneralNote: string; // note generali (interne)
 
-  // Produzione
-  productionNote: string;
-
-  items: OrderItem[];
+  items: Item[];
 };
 
-const LS_KEY = "doubleu_orders_v2";              // archivio
-const LS_DRAFT_KEY = "doubleu_current_draft_v2"; // draft corrente (anti perdita dati)
+const LS_CURRENT = "DOUBLEU_ORDER_CURRENT_V1";
+const LS_ARCHIVE = "DOUBLEU_ORDER_ARCHIVE_V1";
+const LS_COUNTER = "DOUBLEU_ORDER_COUNTER_V1";
 
-const KIDS: SizeKey[] = ["4","6","8","10","12","14","16"];
-const ADULT: SizeKey[] = ["XS","S","M","L","XL","XXL"];
-const ALL: SizeKey[] = [...KIDS, ...ADULT];
-
-const CAT_LABEL: Record<Category, string> = {
-  TSH: "T-shirt",
-  SHO: "Shorts",
-  SWE: "Felpa",
-  TRK: "Pantalone felpa",
-  SKT: "Gonnellino",
-  DRS: "Vestitino",
-  POL: "Polo",
-  CNT: "Canotta"
-};
-
-const UI = {
-  navy: "#0B1F3B",
-  blue: "#1D4ED8",
-  cyan: "#06B6D4",
-  bg: "#F6F7FB",
-  card: "#FFFFFF",
-  soft: "#EEF2FF",
-  border: "#E5E7EB",
-  text: "#0F172A",
-  muted: "#64748B",
-  danger: "#DC2626",
-};
-
-function uid() {
-  return Math.random().toString(16).slice(2) + "_" + Date.now();
-}
-
-function generateDU(sp: string) {
-  const number = sp.replace(/[^0-9]/g, "");
-  return "DU" + number;
-}
-
-function emptySizes(): SizeTable {
-  const obj = {} as SizeTable;
-  for (const k of ALL) obj[k] = 0;
-  return obj;
-}
-
-function sumSizes(s: SizeTable) {
-  return Object.values(s).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-}
-
-function hasAnyQtyIn(sizes: SizeTable, keys: SizeKey[]) {
-  return keys.some(k => (sizes[k] || 0) > 0);
-}
-
-function formatDateIT(d: Date) {
-  return d.toLocaleDateString("it-IT");
-}
-
-function safeFileName(s: string) {
-  return s.trim().replace(/\s+/g, "_").replace(/[^\w\-]/g, "");
-}
-
-function nowISO() {
+function todayISO() {
   return new Date().toISOString();
 }
-
-function pad4(n: number) {
-  const s = String(n);
-  return s.length >= 4 ? s : "0".repeat(4 - s.length) + s;
+function fmtITDate(iso: string) {
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yy = d.getFullYear();
+  return `${dd}/${mm}/${yy}`;
 }
-
-function getYear() {
-  return new Date().getFullYear();
-}
-
-function loadArchive(): OrderDoc[] {
+function safeParse<T>(s: string | null): T | null {
+  if (!s) return null;
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-    return arr as OrderDoc[];
-  } catch {
-    return [];
-  }
-}
-
-function saveArchive(arr: OrderDoc[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(arr));
-}
-
-function loadDraft(): OrderDoc | null {
-  try {
-    const raw = localStorage.getItem(LS_DRAFT_KEY);
-    if (!raw) return null;
-    const obj = JSON.parse(raw);
-    if (!obj?.orderId) return null;
-    return obj as OrderDoc;
+    return JSON.parse(s) as T;
   } catch {
     return null;
   }
 }
-
-function saveDraft(o: OrderDoc) {
-  localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(o));
+function newInternalId(): string {
+  const year = new Date().getFullYear();
+  const raw = localStorage.getItem(LS_COUNTER);
+  const n = Math.max(0, Number(raw || "0")) + 1;
+  localStorage.setItem(LS_COUNTER, String(n));
+  return `DU-${year}-${String(n).padStart(4, "0")}`;
 }
-
-function nextOrderIdFromArchive(archive: OrderDoc[]) {
-  const y = getYear();
-  const prefix = `DU-${y}-`;
-  let maxSeq = 0;
-  for (const o of archive) {
-    if (!o.orderId?.startsWith(prefix)) continue;
-    const tail = o.orderId.slice(prefix.length);
-    const seq = parseInt(tail, 10);
-    if (!Number.isNaN(seq)) maxSeq = Math.max(maxSeq, seq);
-  }
-  return `${prefix}${pad4(maxSeq + 1)}`;
+function emptyQty(): Record<SizeKey, number> {
+  const q = {} as Record<SizeKey, number>;
+  ALL_SIZES.forEach((s) => (q[s] = 0));
+  return q;
 }
-
-function newBlankOrder(orderId: string): OrderDoc {
+function makeBlankOrder(): Order {
+  const now = todayISO();
   return {
-    orderId,
-    status: "DRAFT",
+    internalId: newInternalId(),
+    status: "BOZZA",
+    createdAtISO: now,
+    updatedAtISO: now,
     club: "",
-    createdAtISO: nowISO(),
-    updatedAtISO: nowISO(),
-
     client: {
       name: "",
       address: "",
       city: "",
-      zip: "",
+      cap: "",
       country: "",
-      email: ""
+      email: "",
     },
-
     clientNote: "",
-    productionNote: "",
-    conditions:
-`1. Le quantità e le taglie devono essere verificate prima della conferma definitiva.
-2. L’ordine entrerà in produzione solo dopo conferma scritta.
-3. Eventuali modifiche successive alla conferma potranno comportare variazioni di costo e tempistiche.
-4. I tempi di consegna decorrono dalla conferma definitiva.
-5. I prodotti personalizzati non sono soggetti a reso.`,
+    productionGeneralNote: "",
     items: [],
   };
 }
-
-function mergeArchive(prev: OrderDoc[], incoming: OrderDoc[]) {
-  const map = new Map<string, OrderDoc>();
-  for (const o of prev) map.set(o.orderId, o);
-  for (const o of incoming) map.set(o.orderId, o);
-  return Array.from(map.values()).sort((a, b) => (b.updatedAtISO || "").localeCompare(a.updatedAtISO || ""));
+function uid(prefix = "it") {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
 
-// ================= PDF ENGINE =================
-import jsPDF from "jspdf";
+function sumQty(qty: Record<SizeKey, number>) {
+  return ALL_SIZES.reduce((acc, k) => acc + (Number(qty[k]) || 0), 0);
+}
+function totalPieces(order: Order) {
+  return order.items.reduce((acc, it) => acc + sumQty(it.qty), 0);
+}
 
-type PdfMode = "client" | "production";
+function deepClone<T>(x: T): T {
+  return JSON.parse(JSON.stringify(x)) as T;
+}
 
-function buildOrderPdf(
-  mode: PdfMode,
-  clubName: string,
-  customerName: string,
-  totalPieces: number,
-  items: any[],
-  conditionsText?: string
-) {
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
+/** -------------------- PDF HELPERS (senza autotable) -------------------- */
+type PdfMode = "download" | "print";
 
-  const margin = 40;
-  let y = 50;
-
-  const pageWidth = doc.internal.pageSize.getWidth();
-
-  const isClient = mode === "client";
-
-  // ===== HEADER =====
-  doc.setFillColor(isClient ? 11 : 6, isClient ? 31 : 78, isClient ? 59 : 59);
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 60, 12, 12, "F");
+function pdfHeader(doc: jsPDF, title: string, subtitleRight?: string) {
+  const w = doc.internal.pageSize.getWidth();
+  // top bar
+  doc.setFillColor(11, 31, 59);
+  doc.rect(0, 0, w, 32, "F");
 
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("DOUBLEU", 14, 20);
 
-  doc.text(
-    isClient ? "DOUBLEU · BOZZA CONFERMA ORDINE" : "DOUBLEU · ORDINE PRODUZIONE",
-    margin + 20,
-    y + 38
-  );
-
-  y += 90;
-
-  // ===== INFO BOX =====
-  doc.setFillColor(245, 245, 245);
-  doc.roundedRect(margin, y, pageWidth - margin * 2, 70, 12, 12, "F");
-
-  doc.setTextColor(20, 20, 20);
-  doc.setFontSize(11);
   doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.text(title, 14, 27);
 
-  doc.text(`Club: ${clubName || "-"}`, margin + 20, y + 25);
-  doc.text(`Data: ${new Date().toLocaleDateString()}`, margin + 20, y + 45);
-  doc.text(`Totale pezzi: ${totalPieces}`, pageWidth - margin - 160, y + 25);
-
-  if (!isClient) {
+  if (subtitleRight) {
     doc.setFont("helvetica", "bold");
-    doc.text(`Cliente: ${customerName || "-"}`, pageWidth - margin - 220, y + 45);
+    doc.setFontSize(10);
+    const tw = doc.getTextWidth(subtitleRight);
+    doc.text(subtitleRight, w - 14 - tw, 27);
   }
 
-  y += 100;
+  doc.setTextColor(0, 0, 0);
+}
 
-  // ===== ITEMS =====
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Riepilogo articoli", margin, y);
-  y += 20;
+function pdfCard(doc: jsPDF, x: number, y: number, w: number, h: number) {
+  doc.setFillColor(245, 248, 252);
+  doc.setDrawColor(220, 230, 245);
+  doc.roundedRect(x, y, w, h, 4, 4, "FD");
+}
 
-  items.forEach((item, index) => {
-    if (y > 750) {
+function pdfText(doc: jsPDF, text: string, x: number, y: number, size = 10, bold = false) {
+  doc.setFont("helvetica", bold ? "bold" : "normal");
+  doc.setFontSize(size);
+  doc.text(text, x, y);
+}
+
+function drawTable(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  colWidths: number[],
+  rowHeights: number[],
+  cells: (string | number)[][],
+  headerRows = 1
+) {
+  const totalW = colWidths.reduce((a, b) => a + b, 0);
+
+  let cy = y;
+  for (let r = 0; r < cells.length; r++) {
+    const rh = rowHeights[r] ?? rowHeights[rowHeights.length - 1] ?? 10;
+    let cx = x;
+    for (let c = 0; c < colWidths.length; c++) {
+      const cw = colWidths[c];
+      const isHeader = r < headerRows;
+
+      doc.setDrawColor(220, 230, 245);
+      doc.setFillColor(isHeader ? 235 : 255, isHeader ? 242 : 255, isHeader ? 252 : 255);
+      doc.rect(cx, cy, cw, rh, "FD");
+
+      const value = cells[r]?.[c] ?? "";
+      const str = String(value);
+
+      doc.setFont("helvetica", isHeader ? "bold" : "normal");
+      doc.setFontSize(isHeader ? 9 : 9);
+      doc.setTextColor(20, 35, 55);
+
+      const tx = cx + 2.5;
+      const ty = cy + rh / 2 + 3;
+
+      doc.text(str, tx, ty);
+
+      cx += cw;
+    }
+    cy += rh;
+  }
+
+  // outer border
+  doc.setDrawColor(220, 230, 245);
+  doc.rect(x, y, totalW, rowHeights.slice(0, cells.length).reduce((a, b) => a + b, 0), "S");
+}
+
+function openBlobForPrint(doc: jsPDF) {
+  const blobUrl = doc.output("bloburl");
+  const w = window.open(blobUrl, "_blank");
+  if (!w) return;
+  w.addEventListener("load", () => {
+    w.focus();
+    w.print();
+  });
+}
+
+function makeClientPDF(order: Order, mode: PdfMode) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 32;
+  const contentW = pageW - margin * 2;
+
+  pdfHeader(doc, `BOZZA ORDINE • ${fmtITDate(order.updatedAtISO)}`, `Totale pezzi: ${totalPieces(order)}`);
+
+  let y = 48;
+
+  // Info card
+  pdfCard(doc, margin, y, contentW, 70);
+  pdfText(doc, `Club: ${order.club || "-"}`, margin + 12, y + 22, 11, true);
+  pdfText(doc, `Data: ${fmtITDate(order.updatedAtISO)}`, margin + 12, y + 40, 10, false);
+  if (order.client.name.trim()) pdfText(doc, `Cliente: ${order.client.name}`, margin + 12, y + 56, 10, false);
+  y += 86;
+
+  // Riepilogo articoli
+  pdfText(doc, "Riepilogo articoli", margin, y, 12, true);
+  y += 10;
+
+  const items = order.items;
+
+  // --- CHILD TABLE
+  const childRows: (string | number)[][] = [];
+  childRows.push(["Articolo", ...CHILD_SIZES]);
+  items.forEach((it) => {
+    const name = `${it.description || it.category}${it.color ? " • " + it.color : ""}`;
+    childRows.push([name, ...CHILD_SIZES.map((s) => it.qty[s] || 0)]);
+  });
+  // totals row
+  const childTotals = CHILD_SIZES.map((s) => items.reduce((acc, it) => acc + (it.qty[s] || 0), 0));
+  childRows.push(["Totali per taglia", ...childTotals]);
+
+  const colWChild = [180, ...CHILD_SIZES.map(() => (contentW - 180) / CHILD_SIZES.length)];
+  const rowHChild = childRows.map((_, i) => (i === 0 ? 18 : i === childRows.length - 1 ? 18 : 18));
+
+  pdfText(doc, "Taglie Bambino", margin, y + 22, 10, true);
+  drawTable(doc, margin, y + 30, colWChild, rowHChild, childRows, 1);
+  y += 30 + rowHChild.reduce((a, b) => a + b, 0) + 18;
+
+  // --- ADULT TABLE
+  const adultRows: (string | number)[][] = [];
+  adultRows.push(["Articolo", ...ADULT_SIZES]);
+  items.forEach((it) => {
+    const name = `${it.description || it.category}${it.color ? " • " + it.color : ""}`;
+    adultRows.push([name, ...ADULT_SIZES.map((s) => it.qty[s] || 0)]);
+  });
+  const adultTotals = ADULT_SIZES.map((s) => items.reduce((acc, it) => acc + (it.qty[s] || 0), 0));
+  adultRows.push(["Totali per taglia", ...adultTotals]);
+
+  const colWAdult = [180, ...ADULT_SIZES.map(() => (contentW - 180) / ADULT_SIZES.length)];
+  const rowHAdult = adultRows.map(() => 18);
+
+  pdfText(doc, "Taglie Adulto", margin, y + 22, 10, true);
+  drawTable(doc, margin, y + 30, colWAdult, rowHAdult, adultRows, 1);
+  y += 30 + rowHAdult.reduce((a, b) => a + b, 0) + 18;
+
+  // Note cliente + CGV on page 2 if needed
+  doc.addPage();
+  pdfHeader(doc, `BOZZA ORDINE • ${fmtITDate(order.updatedAtISO)}`);
+
+  let y2 = 54;
+  pdfText(doc, "Note", margin, y2 + 10, 12, true);
+  y2 += 20;
+
+  pdfCard(doc, margin, y2, contentW, 80);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  const note = order.clientNote?.trim() ? order.clientNote.trim() : "-";
+  doc.text(doc.splitTextToSize(note, contentW - 24), margin + 12, y2 + 22);
+  y2 += 100;
+
+  pdfText(doc, "Verifica e conferma", margin, y2, 12, true);
+  y2 += 14;
+  pdfText(
+    doc,
+    "Ti prego di verificare attentamente quantità e taglie. L’ordine entrerà in produzione solo dopo conferma scritta.",
+    margin,
+    y2,
+    10,
+    false
+  );
+  y2 += 24;
+
+  pdfText(doc, "Condizioni Generali di Vendita", margin, y2, 12, true);
+  y2 += 12;
+
+  const cgv = [
+    "1. Le quantità e le taglie devono essere verificate prima della conferma definitiva.",
+    "2. L’ordine entrerà in produzione solo dopo conferma scritta.",
+    "3. Eventuali modifiche successive alla conferma potranno comportare variazioni di costo e tempistiche.",
+    "4. I tempi di consegna decorrono dalla conferma definitiva.",
+    "5. I prodotti personalizzati non sono soggetti a reso.",
+  ];
+  doc.setFontSize(10);
+  doc.text(cgv, margin, y2 + 14);
+
+  if (mode === "print") openBlobForPrint(doc);
+  else doc.save(`DOUBLEU_ordine_${order.club || "cliente"}_${fmtITDate(order.updatedAtISO).replaceAll("/", "-")}.pdf`);
+}
+
+function makeProductionPDF(order: Order, mode: PdfMode) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 32;
+  const contentW = pageW - margin * 2;
+
+  pdfHeader(doc, `PRODUZIONE • ${fmtITDate(order.updatedAtISO)}`, `Ordine interno: ${order.internalId}`);
+
+  let y = 48;
+
+  pdfCard(doc, margin, y, contentW, 80);
+  pdfText(doc, `Club: ${order.club || "-"}`, margin + 12, y + 22, 11, true);
+  pdfText(doc, `Data: ${fmtITDate(order.updatedAtISO)}`, margin + 12, y + 40, 10, false);
+  pdfText(doc, `Stato: ${order.status}`, margin + 12, y + 56, 10, false);
+  pdfText(doc, `Totale pezzi: ${totalPieces(order)}`, margin + 12, y + 72, 10, true);
+  y += 96;
+
+  // Note generali produzione
+  pdfText(doc, "Note generali produzione (interne)", margin, y, 12, true);
+  y += 10;
+  pdfCard(doc, margin, y + 8, contentW, 70);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  const pnote = order.productionGeneralNote?.trim() ? order.productionGeneralNote.trim() : "-";
+  doc.text(doc.splitTextToSize(pnote, contentW - 24), margin + 12, y + 28);
+  y += 98;
+
+  // Per ogni articolo: blocco con SP, descrizione, note + tabelle qty
+  order.items.forEach((it, idx) => {
+    // page break
+    if (y > 640) {
       doc.addPage();
-      y = 60;
+      pdfHeader(doc, `PRODUZIONE • ${fmtITDate(order.updatedAtISO)}`, `Ordine interno: ${order.internalId}`);
+      y = 48;
     }
 
-    doc.setDrawColor(230);
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(margin, y, pageWidth - margin * 2, 90, 12, 12, "FD");
+    pdfCard(doc, margin, y, contentW, 118);
+    pdfText(doc, `${it.category} • ${it.line} • ${it.color}`, margin + 12, y + 22, 11, true);
+    pdfText(doc, `Descrizione: ${it.description || "-"}`, margin + 12, y + 40, 10, false);
+    pdfText(doc, `Codice modellista (SP): ${it.codeSP || "-"}`, margin + 12, y + 58, 10, true);
+    pdfText(doc, `Nota produzione (articolo): ${it.productionNote?.trim() ? it.productionNote.trim() : "-"}`, margin + 12, y + 76, 10, false);
+    pdfText(doc, `Totale articolo: ${sumQty(it.qty)}`, margin + 12, y + 96, 10, true);
 
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.text(`${index + 1}. ${item.description || "-"}`, margin + 20, y + 30);
+    y += 130;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
+    // Tables (child + adult)
+    const childRows: (string | number)[][] = [];
+    childRows.push(["Taglie Bambino", ...CHILD_SIZES]);
+    childRows.push(["Q.tà", ...CHILD_SIZES.map((s) => it.qty[s] || 0)]);
 
-    doc.text(
-      `Linea: ${item.line}  ·  Colore: ${item.color}`,
-      margin + 20,
-      y + 50
-    );
+    const colWChild = [120, ...CHILD_SIZES.map(() => (contentW - 120) / CHILD_SIZES.length)];
+    const rowHChild = [18, 18];
+    drawTable(doc, margin, y, colWChild, rowHChild, childRows, 1);
+    y += rowHChild.reduce((a, b) => a + b, 0) + 10;
 
-    const sizeString = Object.entries(item.sizes || {})
-      .filter(([_, v]) => Number(v) > 0)
-      .map(([k, v]) => `${k}:${v}`)
-      .join("   ");
+    const adultRows: (string | number)[][] = [];
+    adultRows.push(["Taglie Adulto", ...ADULT_SIZES]);
+    adultRows.push(["Q.tà", ...ADULT_SIZES.map((s) => it.qty[s] || 0)]);
 
-    doc.text(`Taglie: ${sizeString || "-"}`, margin + 20, y + 70);
+    const colWAdult = [120, ...ADULT_SIZES.map(() => (contentW - 120) / ADULT_SIZES.length)];
+    const rowHAdult = [18, 18];
+    drawTable(doc, margin, y, colWAdult, rowHAdult, adultRows, 1);
+    y += rowHAdult.reduce((a, b) => a + b, 0) + 18;
 
-    y += 110;
+    if (idx < order.items.length - 1) {
+      doc.setDrawColor(230, 238, 250);
+      doc.line(margin, y, margin + contentW, y);
+      y += 14;
+    }
   });
 
-  // ===== CONDITIONS (solo cliente) =====
-  if (isClient && conditionsText) {
-    if (y > 650) {
-      doc.addPage();
-      y = 60;
-    }
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.text("Condizioni Generali di Vendita", margin, y);
-    y += 15;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-
-    const split = doc.splitTextToSize(
-      conditionsText,
-      pageWidth - margin * 2
-    );
-    doc.text(split, margin, y + 15);
-  }
-
-  const filename =
-    mode === "client"
-      ? `Ordine_${clubName}_CLIENTE.pdf`
-      : `Ordine_${clubName}_PRODUZIONE.pdf`;
-
-  doc.save(filename);
+  if (mode === "print") openBlobForPrint(doc);
+  else doc.save(`DOUBLEU_PRODUZIONE_${order.internalId}_${fmtITDate(order.updatedAtISO).replaceAll("/", "-")}.pdf`);
 }
-// ================= END PDF ENGINE =================
+
+/** -------------------- APP -------------------- */
+
 export default function App() {
-  const [archive, setArchive] = useState<OrderDoc[]>([]);
-  const [showArchive, setShowArchive] = useState(false);
+  const [order, setOrder] = useState<Order>(() => {
+    const saved = safeParse<Order>(localStorage.getItem(LS_CURRENT));
+    return saved ?? makeBlankOrder();
+  });
 
-  // ricerca / filtri archivio
-  const [archiveQuery, setArchiveQuery] = useState("");
-  const [archiveStatus, setArchiveStatus] = useState<"ALL" | Status>("ALL");
+  const [archive, setArchive] = useState<Order[]>(() => safeParse<Order[]>(localStorage.getItem(LS_ARCHIVE)) ?? []);
 
-  // Import/export
-  const [showImport, setShowImport] = useState(false);
-  const [importText, setImportText] = useState("");
-  const [showExport, setShowExport] = useState(false);
-  const [exportText, setExportText] = useState("");
-  const [exportMode, setExportMode] = useState<"CURRENT" | "ALL">("CURRENT");
-
-  // Ordine corrente
-  const [order, setOrder] = useState<OrderDoc>(() => newBlankOrder(`DU-${getYear()}-0001`));
-
-  // form articolo
-  const [spCode, setSpCode] = useState("");
-  const [category, setCategory] = useState<Category>("SWE");
-  const [line, setLine] = useState<Line>("PERF");
-  const [description, setDescription] = useState("");
-  const [color, setColor] = useState("Navy");
-
-  const locked = order.status === "CONFIRMED";
-
-  // init: archive + draft restore
+  // autosave current order
   useEffect(() => {
-    const a = loadArchive();
-    setArchive(a);
-
-    const draft = loadDraft();
-    if (draft) {
-      setOrder(draft);
-      return;
-    }
-
-    const nextId = nextOrderIdFromArchive(a);
-    setOrder(prev => ({ ...prev, orderId: nextId }));
-  }, []);
-
-  // archive persist
-  useEffect(() => {
-    saveArchive(archive);
-  }, [archive]);
-
-  // draft autosave (anti perdita dati)
-  useEffect(() => {
-    saveDraft(order);
+    localStorage.setItem(LS_CURRENT, JSON.stringify(order));
   }, [order]);
 
-  const totalPieces = useMemo(
-    () => order.items.reduce((acc, it) => acc + sumSizes(it.sizes), 0),
-    [order.items]
-  );
+  useEffect(() => {
+    localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
+  }, [archive]);
 
-  function touchOrder(patch: Partial<OrderDoc>) {
-    setOrder(prev => ({ ...prev, ...patch, updatedAtISO: nowISO() }));
+  const total = useMemo(() => totalPieces(order), [order]);
+
+  function touch(partial: Partial<Order>) {
+    setOrder((o) => ({
+      ...o,
+      ...partial,
+      updatedAtISO: todayISO(),
+    }));
   }
 
-  function setClub(v: string) {
-    if (locked) return;
-    touchOrder({ club: v });
+  function updateClient(partial: Partial<ClientInfo>) {
+    setOrder((o) => ({
+      ...o,
+      client: { ...o.client, ...partial },
+      updatedAtISO: todayISO(),
+    }));
   }
 
-  function setConditions(v: string) {
-    if (locked) return;
-    touchOrder({ conditions: v });
-  }
-
-  function setClientNote(v: string) {
-    if (locked) return;
-    touchOrder({ clientNote: v });
-  }
-
-  function setProductionNote(v: string) {
-    if (locked) return;
-    touchOrder({ productionNote: v });
-  }
-
-  function setClientField<K extends keyof ClientInfo>(k: K, v: string) {
-    if (locked) return;
-    touchOrder({ client: { ...order.client, [k]: v } });
-  }
-
-  function addItem() {
-    if (locked) return;
-    if (!spCode.trim()) return;
-
-    const sp = spCode.toUpperCase().trim();
-    const du = generateDU(sp);
-
-    const newItem: OrderItem = {
-      id: uid(),
-      sp,
-      du,
-      category,
-      line,
-      description: description.trim() || "—",
-      color: color.trim() || "—",
-      sizes: emptySizes(),
-      productionNote: ""
+  function addItem(asSet: boolean) {
+    const base: Item = {
+      id: uid("item"),
+      codeSP: form.codeSP,
+      category: form.category,
+      line: form.line,
+      description: form.description,
+      color: form.color,
+      productionNote: "",
+      qty: emptyQty(),
     };
 
-    touchOrder({ items: [newItem, ...order.items] });
-    setSpCode("");
-    setDescription("");
+    const itemsToAdd: Item[] = asSet
+      ? [
+          { ...deepClone(base), id: uid("item"), description: `${base.description} (set)` },
+          { ...deepClone(base), id: uid("item"), category: "Pantalone", description: `Pantalone ${base.description} (set)` },
+        ]
+      : [base];
+
+    setOrder((o) => ({
+      ...o,
+      items: [...o.items, ...itemsToAdd],
+      updatedAtISO: todayISO(),
+    }));
   }
 
-  function updateSize(itemId: string, size: SizeKey, value: number) {
-    if (locked) return;
-    const next = order.items.map(it => {
-      if (it.id !== itemId) return it;
-      return { ...it, sizes: { ...it.sizes, [size]: Math.max(0, value) } };
-    });
-    touchOrder({ items: next });
+  function removeItem(id: string) {
+    setOrder((o) => ({
+      ...o,
+      items: o.items.filter((it) => it.id !== id),
+      updatedAtISO: todayISO(),
+    }));
   }
 
-  function updateItemNote(itemId: string, note: string) {
-    if (locked) return;
-    const next = order.items.map(it => (it.id === itemId ? { ...it, productionNote: note } : it));
-    touchOrder({ items: next });
+  function updateItem(id: string, partial: Partial<Item>) {
+    setOrder((o) => ({
+      ...o,
+      items: o.items.map((it) => (it.id === id ? { ...it, ...partial } : it)),
+      updatedAtISO: todayISO(),
+    }));
   }
 
-  function removeItem(itemId: string) {
-    if (locked) return;
-    touchOrder({ items: order.items.filter(it => it.id !== itemId) });
+  function updateQty(id: string, size: SizeKey, value: number) {
+    const v = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+    setOrder((o) => ({
+      ...o,
+      items: o.items.map((it) =>
+        it.id === id ? { ...it, qty: { ...it.qty, [size]: v } } : it
+      ),
+      updatedAtISO: todayISO(),
+    }));
   }
 
-  function addSetTracksuit() {
-    if (locked) return;
-    const spBase = spCode.trim() ? spCode.trim() : "SP 000";
-
-    const hoodie: OrderItem = {
-      id: uid(),
-      sp: spBase.toUpperCase(),
-      du: generateDU(spBase),
-      category: "SWE",
-      line: "PERF",
-      description: "Felpa (set)",
-      color: color.trim() || "Navy",
-      sizes: emptySizes(),
-      productionNote: ""
-    };
-
-    const pants: OrderItem = {
-      id: uid(),
-      sp: spBase.toUpperCase(),
-      du: generateDU(spBase),
-      category: "TRK",
-      line: "PERF",
-      description: "Pantalone felpa (set)",
-      color: color.trim() || "Navy",
-      sizes: emptySizes(),
-      productionNote: ""
-    };
-
-    touchOrder({ items: [pants, hoodie, ...order.items] });
+  function confirmOrder() {
+    touch({ status: "CONFERMATO" });
   }
 
-  function toggleStatus() {
-    if (order.status === "DRAFT") {
-      if (!order.club.trim()) { alert("Inserisci il nome del Club"); return; }
-      if (order.items.length === 0) { alert("Aggiungi almeno un articolo"); return; }
-      touchOrder({ status: "CONFIRMED" });
-      return;
-    }
-    const ok = confirm("Vuoi tornare in BOZZA e riabilitare le modifiche?");
-    if (!ok) return;
-    touchOrder({ status: "DRAFT" });
+  function saveToArchive() {
+    const snap = deepClone(order);
+    setArchive((a) => [snap, ...a].slice(0, 200));
   }
 
-  function saveCurrentToArchive() {
-    const id = order.orderId.trim();
-    if (!id) { alert("Order ID non valido"); return; }
-
-    setArchive(prev => {
-      const idx = prev.findIndex(o => o.orderId === id);
-      const updated = { ...order, updatedAtISO: nowISO() };
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = updated;
-        return copy;
-      }
-      return [updated, ...prev];
-    });
-    alert("Ordine salvato in archivio");
+  function loadFromArchive(idx: number) {
+    const chosen = archive[idx];
+    if (!chosen) return;
+    setOrder(deepClone(chosen));
   }
 
-  function loadOrderFromArchive(orderId: string) {
-    const found = archive.find(o => o.orderId === orderId);
-    if (!found) return;
-    setOrder(found);
-    setShowArchive(false);
+  function deleteFromArchive(idx: number) {
+    setArchive((a) => a.filter((_, i) => i !== idx));
   }
 
-  function duplicateCurrentOrder() {
-    const newId = nextOrderIdFromArchive(archive);
-    const dup: OrderDoc = {
-      ...order,
-      orderId: newId,
-      status: "DRAFT",
-      createdAtISO: nowISO(),
-      updatedAtISO: nowISO(),
-      items: order.items.map(it => ({ ...it, id: uid() })),
-    };
-    setOrder(dup);
-    alert(`Duplicato creato: ${newId}`);
+  function duplicateOrder() {
+    const clone = deepClone(order);
+    clone.internalId = newInternalId();
+    clone.status = "BOZZA";
+    clone.createdAtISO = todayISO();
+    clone.updatedAtISO = todayISO();
+    // new item ids
+    clone.items = clone.items.map((it) => ({ ...it, id: uid("item") }));
+    setOrder(clone);
   }
 
   function newOrder() {
-    const newId = nextOrderIdFromArchive(archive);
-    setOrder(newBlankOrder(newId));
-    setSpCode("");
-    setDescription("");
-    alert(`Nuovo ordine: ${newId}`);
+    setOrder(makeBlankOrder());
   }
 
-  function openExport(mode: "CURRENT" | "ALL") {
-    setExportMode(mode);
-    const payload = mode === "CURRENT" ? order : archive;
-    setExportText(JSON.stringify(payload, null, 2));
-    setShowExport(true);
-  }
-
-  function applyImport() {
-    try {
-      const parsed = JSON.parse(importText);
-
-      if (Array.isArray(parsed)) {
-        const incoming = parsed as OrderDoc[];
-        setArchive(prev => mergeArchive(prev, incoming));
-        alert("Import archivio completato");
-        setShowImport(false);
-        setImportText("");
-        return;
-      }
-
-      const incoming = parsed as OrderDoc;
-      if (!incoming.orderId) throw new Error("orderId mancante");
-
-      setArchive(prev => mergeArchive(prev, [incoming]));
-      setOrder(incoming);
-      alert(`Import ordine completato: ${incoming.orderId}`);
-      setShowImport(false);
-      setImportText("");
-    } catch {
-      alert("JSON non valido o non compatibile");
-    }
-  }
-
-  // =========================
-  // PDF helpers
-  // =========================
-  async function pdf() {
-    const { default: jsPDF } = await import("jspdf");
-    return jsPDF;
-  }
-
-  function ensureBasics() {
-    if (!order.club.trim()) { alert("Inserisci il nome del Club"); return false; }
-    if (order.items.length === 0) { alert("Aggiungi almeno un articolo"); return false; }
-    return true;
-  }
-
-  // iPad-safe: se popup bloccato -> download (non cambiare pagina)
-  function openBlobForPrint(doc: any, filename: string) {
-    const blob = doc.output("blob");
+  function exportOrderJSON() {
+    const data = JSON.stringify(order, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DOUBLEU_ordine_${order.internalId}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 800);
+  }
 
-    const w = window.open(url, "_blank");
-    if (!w) {
-      doc.save(filename);
+  function exportArchiveJSON() {
+    const data = JSON.stringify(archive, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DOUBLEU_archivio.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 800);
+  }
+
+  async function importJSON(file: File | null) {
+    if (!file) return;
+    const text = await file.text();
+    const parsed = safeParse<any>(text);
+    if (!parsed) {
+      alert("JSON non valido.");
+      return;
     }
-
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  }
-
-  // ===== PDF CLIENTE =====
-  async function generateClientPDF(mode: "download" | "print") {
-    if (!ensureBasics()) return;
-
-    try {
-      const jsPDF = await pdf();
-      const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-      const pageW = 595;
-      const pageH = 842;
-      const margin = 40;
-      const contentW = pageW - margin * 2;
-
-      const DATE_STR = formatDateIT(new Date());
-
-      // NO orderId nel PDF cliente
-      const FILE_BASE = `DOUBLEU_${safeFileName(order.club)}_${DATE_STR.replaceAll("/", "-")}_CLIENTE`;
-
-      const drawTopBar = () => {
-        doc.setFillColor(11, 31, 59);
-        doc.rect(0, 0, pageW, 84, "F");
-        doc.setFillColor(29, 78, 216);
-        doc.rect(0, 84, pageW, 4, "F");
-
-        doc.setTextColor(255,255,255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(18);
-        doc.text("DOUBLEU", margin, 38);
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(12);
-        doc.text(`${order.status === "CONFIRMED" ? "CONFERMA ORDINE" : "BOZZA ORDINE"} • ${DATE_STR}`, margin, 58);
-
-        doc.setTextColor(15,23,42);
-      };
-
-      const drawFooter = (pageNum: number, totalPages: number) => {
-        const y = pageH - 32;
-        doc.setDrawColor(230,230,230);
-        doc.line(margin, y - 10, pageW - margin, y - 10);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(120,120,120);
-        doc.text(`${order.status === "CONFIRMED" ? "CONFERMATO" : "BOZZA"} • ${order.club} • ${DATE_STR}`, margin, y);
-        doc.text(`Pag. ${pageNum}/${totalPages}`, pageW - margin, y, { align: "right" });
-        doc.setTextColor(15,23,42);
-      };
-
-      const newPage = () => {
-        doc.addPage();
-        drawTopBar();
-        return 110;
-      };
-
-      drawTopBar();
-      let y = 110;
-
-      // Meta card
-      doc.setFillColor(255,255,255);
-      doc.setDrawColor(229,231,235);
-      doc.roundedRect(margin, y, contentW, 108, 12, 12, "FD");
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text(`Club: ${order.club}`, margin + 14, y + 24);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.setTextColor(100,100,120);
-      doc.text(`Data: ${DATE_STR}`, margin + 14, y + 44);
-
-      // Dati spedizione (facoltativi): stampa solo se almeno nome o indirizzo
-      const c = order.client || { name:"", address:"", city:"", zip:"", country:"", email:"" };
-      const anyShip =
-        (c.name || "").trim() ||
-        (c.address || "").trim() ||
-        (c.city || "").trim() ||
-        (c.zip || "").trim() ||
-        (c.country || "").trim() ||
-        (c.email || "").trim();
-
-      if (anyShip) {
-        const line1 = `Cliente: ${(c.name || "—").trim() || "—"}`;
-        const line2Parts = [
-          (c.address || "").trim(),
-          [ (c.zip || "").trim(), (c.city || "").trim() ].filter(Boolean).join(" "),
-          (c.country || "").trim()
-        ].filter(Boolean);
-        const line2 = line2Parts.length ? `Spedizione: ${line2Parts.join(", ")}` : "";
-        const line3 = (c.email || "").trim() ? `Email: ${(c.email || "").trim()}` : "";
-
-        doc.text(line1, margin + 14, y + 62);
-        if (line2) doc.text(line2, margin + 14, y + 78);
-        if (line3) doc.text(line3, margin + 14, y + 94);
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(11,31,59);
-      doc.text(`Totale pezzi: ${totalPieces}`, pageW - margin - 14, y + 30, { align: "right" });
-      doc.setTextColor(15,23,42);
-
-      y += 128;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text("Riepilogo articoli", margin, y);
-      y += 14;
-
-      const drawSizeTable = (title: string, sizesCols: SizeKey[], rows: OrderItem[]) => {
-        if (rows.length === 0) return;
-        if (y > pageH - 240) y = newPage();
-
-        doc.setFillColor(238,242,255);
-        doc.setDrawColor(229,231,235);
-        doc.roundedRect(margin, y, contentW, 24, 10, 10, "FD");
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(11,31,59);
-        doc.text(title, margin + 12, y + 16);
-        doc.setTextColor(15,23,42);
-        y += 34;
-
-        const colW = 34;
-        const labelW = contentW - (sizesCols.length * colW);
-
-        const headH = 22;
-        doc.setFillColor(248,248,250);
-        doc.setDrawColor(229,231,235);
-        doc.roundedRect(margin, y, contentW, headH, 10, 10, "FD");
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(9);
-        doc.setTextColor(100,100,120);
-        doc.text("Articolo", margin + 12, y + 15);
-
-        for (let i = 0; i < sizesCols.length; i++) {
-          const x = margin + labelW + i * colW;
-          doc.text(String(sizesCols[i]), x + colW / 2, y + 15, { align: "center" });
-        }
-        doc.setTextColor(15,23,42);
-        y += headH + 8;
-
-        const totals: Record<string, number> = {};
-        for (const s of sizesCols) totals[s] = 0;
-
-        for (let r = 0; r < rows.length; r++) {
-          const it = rows[r];
-          for (const s of sizesCols) totals[s] += (it.sizes[s] || 0);
-
-          const rowTitle = `${it.description} • ${it.color}`;
-          const wrapped = doc.splitTextToSize(rowTitle, labelW - 24);
-          const rowH = Math.max(34, wrapped.length * 12 + 10);
-
-          if (y + rowH > pageH - 140) y = newPage();
-
-          const zebra = r % 2 === 0;
-          doc.setFillColor(zebra ? 255 : 249, zebra ? 255 : 250, zebra ? 255 : 252);
-          doc.setDrawColor(229,231,235);
-          doc.roundedRect(margin, y, contentW, rowH, 10, 10, "FD");
-
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(10);
-          doc.text(wrapped, margin + 12, y + 14);
-
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(9);
-          doc.setTextColor(110,110,130);
-          doc.text(
-            `${CAT_LABEL[it.category]} • ${it.line === "PERF" ? "Performance" : "Essential"} • Tot: ${sumSizes(it.sizes)}`,
-            margin + 12,
-            y + 14 + wrapped.length * 12
-          );
-          doc.setTextColor(15,23,42);
-
-          doc.setFontSize(10);
-          for (let i = 0; i < sizesCols.length; i++) {
-            const s = sizesCols[i];
-            const q = it.sizes[s] || 0;
-            const x = margin + labelW + i * colW + colW / 2;
-            doc.text(q > 0 ? String(q) : "—", x, y + 18, { align: "center" });
-          }
-
-          y += rowH + 8;
-        }
-
-        if (y + 34 > pageH - 140) y = newPage();
-        doc.setFillColor(11,31,59);
-        doc.setDrawColor(11,31,59);
-        doc.roundedRect(margin, y, contentW, 28, 10, 10, "FD");
-
-        doc.setTextColor(255,255,255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.text("Totali per taglia", margin + 12, y + 18);
-
-        for (let i = 0; i < sizesCols.length; i++) {
-          const s = sizesCols[i];
-          const x = margin + labelW + i * colW + colW / 2;
-          doc.text(String(totals[s]), x, y + 18, { align: "center" });
-        }
-        doc.setTextColor(15,23,42);
-        y += 40;
-      };
-
-      const kidsRows = order.items.filter(it => hasAnyQtyIn(it.sizes, KIDS));
-      const adultRows = order.items.filter(it => hasAnyQtyIn(it.sizes, ADULT));
-      drawSizeTable("Taglie Bambino", KIDS, kidsRows);
-      drawSizeTable("Taglie Adulto", ADULT, adultRows);
-
-      if (order.clientNote.trim()) {
-        if (y > pageH - 220) y = newPage();
-        doc.setDrawColor(220,220,220);
-        doc.line(margin, y, pageW - margin, y);
-        y += 18;
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
-        doc.text("Note", margin, y);
-        y += 12;
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        const note = doc.splitTextToSize(order.clientNote, contentW);
-        doc.text(note, margin, y);
-        y += note.length * 12 + 12;
-      }
-
-      if (y > pageH - 250) y = newPage();
-      doc.setDrawColor(220,220,220);
-      doc.line(margin, y, pageW - margin, y);
-      y += 18;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.text("Verifica e conferma", margin, y);
-      y += 14;
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      const confirmText = doc.splitTextToSize(
-        "Si prega di verificare attentamente quantità e taglie. L’ordine entrerà in produzione solo dopo conferma scritta.",
-        contentW
-      );
-      doc.text(confirmText, margin, y);
-      y += confirmText.length * 12 + 16;
-
-      doc.setFont("helvetica", "bold");
-      doc.text("Condizioni Generali di Vendita", margin, y);
-      y += 12;
-
-      doc.setFont("helvetica", "normal");
-      const cond = doc.splitTextToSize(order.conditions, contentW);
-      doc.text(cond, margin, y);
-
-      const totalPages = doc.getNumberOfPages();
-      for (let p = 1; p <= totalPages; p++) {
-        doc.setPage(p);
-        drawFooter(p, totalPages);
-      }
-
-      if (mode === "download") {
-        doc.save(`${FILE_BASE}.pdf`);
-      } else {
-        openBlobForPrint(doc, `${FILE_BASE}.pdf`);
-      }
-    } catch (e: any) {
-      console.error(e);
-      alert("Errore PDF Cliente. Controlla che 'jspdf' sia installato (npm install jspdf).");
+    // if it's an archive array
+    if (Array.isArray(parsed)) {
+      setArchive(parsed as Order[]);
+      alert("Archivio importato.");
+      return;
     }
+    // else assume single order
+    setOrder(parsed as Order);
+    alert("Ordine importato.");
   }
 
-  // ===== PDF PRODUZIONE (stesso stile Cliente) =====
-    // ===== PDF PRODUZIONE (stesso stile Cliente, colori diversi) =====
-  async function generateProductionPDF(mode: "download" | "print") {
-    if (!ensureBasics()) return;
-
-    try {
-      const jsPDF = await pdf();
-      const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-      const pageW = 595;
-      const pageH = 842;
-      const margin = 40;
-      const contentW = pageW - margin * 2;
-
-      const DATE_STR = formatDateIT(new Date());
-
-      // Palette "produzione" (diversa dal cliente, stessa grafica)
-      const BRAND = {
-        navy: [12, 35, 64] as [number, number, number],
-        ink: [18, 24, 34] as [number, number, number],
-        muted: [110, 120, 135] as [number, number, number],
-        line: [230, 235, 242] as [number, number, number],
-        card: [245, 247, 251] as [number, number, number],
-        accent: [18, 102, 241] as [number, number, number], // blu vivo
-      };
-
-      const roundRect = (
-        x: number,
-        y: number,
-        w: number,
-        h: number,
-        r: number,
-        fill: boolean,
-        stroke: boolean
-      ) => {
-        // @ts-ignore
-        doc.roundedRect(x, y, w, h, r, r, fill ? "F" : stroke ? "S" : undefined);
-      };
-
-      const setFill = (rgb: [number, number, number]) => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-      const setText = (rgb: [number, number, number]) => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
-      const setDraw = (rgb: [number, number, number]) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
-
-      // Header
-      const headerH = 88;
-      setFill(BRAND.navy);
-      doc.rect(0, 0, pageW, headerH, "F");
-
-      setText([255, 255, 255]);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(18);
-      doc.text("DOUBLEU · ORDINE PRODUZIONE", margin, 38);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
-      doc.text(`Cliente: ${order.club || "-"}`, margin, 62);
-      doc.text(`Data: ${DATE_STR}`, pageW - margin, 62, { align: "right" });
-
-      // Blocchi meta
-      let y = headerH + 18;
-
-      const cardGap = 12;
-      const cardR = 12;
-
-      const card = (title: string, left: number, top: number, w: number, h: number) => {
-        setFill(BRAND.card);
-        setDraw(BRAND.line);
-        // bordo leggero
-        // @ts-ignore
-        doc.setLineWidth(1);
-        // @ts-ignore
-        doc.roundedRect(left, top, w, h, cardR, cardR, "FD");
-
-        setText(BRAND.ink);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
-        doc.text(title, left + 14, top + 22);
-      };
-
-      const totalPieces = computeTotalPieces(order);
-
-      card("Riepilogo", margin, y, contentW, 68);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
-      setText(BRAND.ink);
-      doc.text(`Totale pezzi: ${totalPieces}`, margin + 14, y + 46);
-
-      y += 68 + 14;
-
-      // Note produzione (interne) — se le hai già in order.notesProduction / simile
-      // Non tocco la tua struttura: provo a leggere alcune chiavi comuni.
-      const prodNotes =
-        (order as any).notesProduction ||
-        (order as any).productionNotes ||
-        (order as any).notes_production ||
-        "";
-
-      if (prodNotes && String(prodNotes).trim().length > 0) {
-        const boxH = 92;
-        card("Note produzione (interne)", margin, y, contentW, boxH);
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        setText(BRAND.muted);
-
-        const maxW = contentW - 28;
-        const lines = doc.splitTextToSize(String(prodNotes), maxW);
-        doc.text(lines, margin + 14, y + 44);
-
-        y += boxH + 14;
-      }
-
-      // Lista articoli (stesso layout del cliente: cards)
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(13);
-      setText(BRAND.ink);
-      doc.text("Articoli", margin, y + 6);
-      y += 16;
-
-      const itemCardHBase = 112;
-      const perRow = 3;
-
-      const drawQtyChip = (x: number, y: number, label: string, value: number) => {
-        const w = 54;
-        const h = 30;
-
-        setFill([255, 255, 255]);
-        setDraw(BRAND.line);
-        // @ts-ignore
-        doc.roundedRect(x, y, w, h, 10, 10, "FD");
-
-        // label
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(9);
-        setText(BRAND.muted);
-        doc.text(label, x + w / 2, y + 12, { align: "center" });
-
-        // value
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(14);
-        setText(BRAND.ink);
-        doc.text(String(value), x + w / 2, y + 25, { align: "center" });
-      };
-
-      for (let idx = 0; idx < order.items.length; idx++) {
-        const it = order.items[idx];
-
-        // se stai usando "set" felpa+pantalone, nel tuo codice gli item arrivano duplicati:
-        // qui li stampo così come sono (come cliente), con stesse info.
-        const name = it.description || it.category || "Articolo";
-        const meta = `${labelCategory(it.category)} · ${labelLine(it.line)} · Colore: ${it.color || "-"}`;
-        const du = it.du || ""; // DU interno ok
-        const total = computeItemTotal(it);
-
-        // calcolo altezza dinamica: se molte taglie, metto a capo
-        const sizes = orderedSizes();
-        const nonZero = sizes.filter((k) => (it.sizes?.[k] || 0) > 0);
-        const rows = Math.ceil(nonZero.length / perRow) || 1;
-        const cardH = itemCardHBase + (rows - 1) * 34;
-
-        // nuova pagina se serve
-        if (y + cardH + 40 > pageH) {
-          doc.addPage();
-          y = 40;
-        }
-
-        // Card
-        setFill([255, 255, 255]);
-        setDraw(BRAND.line);
-        // @ts-ignore
-        doc.roundedRect(margin, y, contentW, cardH, 14, 14, "FD");
-
-        // barra accent
-        setFill(BRAND.accent);
-        // @ts-ignore
-        doc.roundedRect(margin, y, contentW, 10, 14, 14, "F");
-
-        // Titolo
-        setText(BRAND.ink);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(12);
-        doc.text(name, margin + 14, y + 30);
-
-        // Meta
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        setText(BRAND.muted);
-        doc.text(meta, margin + 14, y + 48);
-
-        // Riga DU e totale
-        setText(BRAND.ink);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        const leftLine = du ? `DU: ${du}` : "DU: -";
-        doc.text(leftLine, margin + 14, y + 68);
-        doc.text(`Totale: ${total}`, margin + 140, y + 68);
-
-        // Quantità per taglia (chips)
-        const startX = margin + 14;
-        let chipY = y + 78;
-        let col = 0;
-
-        const list = nonZero.length ? nonZero : sizes.slice(0, 3); // fallback
-
-        for (const k of list) {
-          const v = it.sizes?.[k] || 0;
-          if (!nonZero.length) continue; // se fallback e tutte 0, non stampo
-          drawQtyChip(startX + col * 64, chipY, k, v);
-          col++;
-          if (col >= perRow) {
-            col = 0;
-            chipY += 34;
-          }
-        }
-
-        y += cardH + 12;
-      }
-
-      // Footer
-      const footerY = pageH - 28;
-      setText(BRAND.muted);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text("Documento interno di produzione", margin, footerY);
-
-      const FILE_BASE = `Ordine_${(order.club || "cliente").replaceAll(" ", "_")}_PRODUZIONE_${DATE_STR.replaceAll(
-        "/",
-        "-"
-      )}`;
-
-      if (mode === "download") {
-        doc.save(`${FILE_BASE}.pdf`);
-      } else {
-        openBlobForPrint(doc, `${FILE_BASE}.pdf`);
-      }
-    } catch (e: any) {
-      console.error(e);
-      alert("Errore PDF Produzione. Controlla che 'jspdf' sia installato.");
-    }
+  function pdfCliente(mode: PdfMode) {
+    makeClientPDF(order, mode);
   }
-    if (!ensureBasics()) return;
-
-    try {
-      const jsPDF = await pdf();
-      const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-      const pageW = 595;
-      const pageH = 842;
-      const margin = 40;
-      const contentW = pageW - margin * 2;
-
-      const DATE_STR = formatDateIT(new Date());
-      const FILE_BASE = `DOUBLEU_${safeFileName(order.club)}_${order.orderId}_PRODUZIONE`;
-
-      const clientName = (order.client?.name || "").trim();
-
-      const drawTopBar = () => {
-        doc.setFillColor(11, 31, 59);
-        doc.rect(0, 0, pageW, 84, "F");
-        doc.setFillColor(29, 78, 216);
-        doc.rect(0, 84, pageW, 4, "F");
-
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(18);
-        doc.text("DOUBLEU", margin, 38);
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(12);
-        doc.text(`PRODUZIONE (INTERNO) • ${DATE_STR}`, margin, 58);
-
-        doc.setTextColor(15, 23, 42);
-      };
-
-      const drawFooter = (pageNum: number, totalPages: number) => {
-        const y = pageH - 32;
-        doc.setDrawColor(230, 230, 230);
-        doc.line(margin, y - 10, pageW - margin, y - 10);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(9);
-        doc.setTextColor(120, 120, 120);
-        doc.text(`Produzione • ${order.club} • ${DATE_STR}`, margin, y);
-        doc.text(`Pag. ${pageNum}/${totalPages}`, pageW - margin, y, { align: "right" });
-        doc.setTextColor(15, 23, 42);
-      };
-
-      const newPage = () => {
-        doc.addPage();
-        drawTopBar();
-        return 110;
-      };
-
-      drawTopBar();
-      let y = 110;
-
-      // ===== META CARD =====
-      doc.setFillColor(255, 255, 255);
-      doc.setDrawColor(229, 231, 235);
-      doc.roundedRect(margin, y, contentW, 86, 12, 12, "FD");
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text(`Club: ${order.club}`, margin + 14, y + 24);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 120);
-      doc.text(`Data: ${DATE_STR}`, margin + 14, y + 44);
-
-      // SOLO NOME CLIENTE (se presente)
-      if (clientName) {
-        doc.text(`Cliente: ${clientName}`, margin + 14, y + 62);
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(11, 31, 59);
-      doc.text(`Ordine interno: ${order.orderId}`, pageW - margin - 14, y + 30, { align: "right" });
-      doc.text(`Totale pezzi: ${totalPieces}`, pageW - margin - 14, y + 50, { align: "right" });
-      doc.setTextColor(15, 23, 42);
-
-      y += 106;
-
-      // ===== NOTE GENERALI PRODUZIONE =====
-      if (order.productionNote.trim()) {
-        if (y > pageH - 220) y = newPage();
-
-        doc.setFillColor(238, 242, 255);
-        doc.setDrawColor(229, 231, 235);
-        doc.roundedRect(margin, y, contentW, 24, 10, 10, "FD");
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(11, 31, 59);
-        doc.text("Note generali produzione", margin + 12, y + 16);
-        doc.setTextColor(15, 23, 42);
-        y += 34;
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        doc.setTextColor(70, 70, 70);
-        const pn = doc.splitTextToSize(order.productionNote, contentW);
-        doc.text(pn, margin, y);
-        doc.setTextColor(15, 23, 42);
-        y += pn.length * 12 + 16;
-      }
-
-      // ===== LISTA ARTICOLI (card style) =====
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text("Riepilogo articoli (produzione)", margin, y);
-      y += 14;
-
-      for (let idx = 0; idx < order.items.length; idx++) {
-        const it = order.items[idx];
-
-        const title = `${idx + 1}. ${it.description}`;
-        const meta = `${CAT_LABEL[it.category]} • ${it.line === "PERF" ? "Performance" : "Essential"} • Colore: ${it.color}`;
-        const codes = `SP: ${it.sp}   •   DU: ${it.du}   •   Tot: ${sumSizes(it.sizes)}`;
-
-        // Riga taglie compatta (solo taglie con quantità > 0)
-        const sizeChunks: string[] = [];
-        for (const s of ALL) {
-          const q = it.sizes[s] || 0;
-          if (q > 0) sizeChunks.push(`${s}:${q}`);
-        }
-        const sizeLine = sizeChunks.length ? `Taglie: ${sizeChunks.join("  ")}` : "Taglie: —";
-
-        const titleWrap = doc.splitTextToSize(title, contentW - 24);
-        const metaWrap = doc.splitTextToSize(meta, contentW - 24);
-        const codesWrap = doc.splitTextToSize(codes, contentW - 24);
-        const sizesWrap = doc.splitTextToSize(sizeLine, contentW - 24);
-
-        let noteWrap: string[] = [];
-        if (it.productionNote.trim()) {
-          noteWrap = doc.splitTextToSize(`Nota articolo: ${it.productionNote.trim()}`, contentW - 24);
-        }
-
-        const blockH =
-          16 + titleWrap.length * 12 +
-          6 + metaWrap.length * 11 +
-          4 + codesWrap.length * 11 +
-          4 + sizesWrap.length * 11 +
-          (noteWrap.length ? 8 + noteWrap.length * 11 : 0) +
-          14;
-
-        if (y + blockH > pageH - 120) y = newPage();
-
-        // Card
-        doc.setFillColor(255, 255, 255);
-        doc.setDrawColor(229, 231, 235);
-        doc.roundedRect(margin, y, contentW, blockH, 12, 12, "FD");
-
-        let yy = y + 18;
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
-        doc.setTextColor(15, 23, 42);
-        doc.text(titleWrap, margin + 12, yy);
-        yy += titleWrap.length * 12 + 8;
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        doc.setTextColor(110, 110, 130);
-        doc.text(metaWrap, margin + 12, yy);
-        yy += metaWrap.length * 11 + 6;
-
-        doc.setTextColor(70, 70, 70);
-        doc.text(codesWrap, margin + 12, yy);
-        yy += codesWrap.length * 11 + 6;
-
-        doc.text(sizesWrap, margin + 12, yy);
-        yy += sizesWrap.length * 11;
-
-        if (noteWrap.length) {
-          yy += 10;
-          doc.setTextColor(70, 70, 70);
-          doc.text(noteWrap, margin + 12, yy);
-        }
-
-        doc.setTextColor(15, 23, 42);
-        y += blockH + 12;
-      }
-
-      // Footer su tutte le pagine
-      const totalPages = doc.getNumberOfPages();
-      for (let p = 1; p <= totalPages; p++) {
-        doc.setPage(p);
-        drawFooter(p, totalPages);
-      }
-
-      if (mode === "download") {
-        doc.save(`${FILE_BASE}.pdf`);
-      } else {
-        openBlobForPrint(doc, `${FILE_BASE}.pdf`);
-      }
-    } catch (e: any) {
-      console.error(e);
-      alert("Errore PDF Produzione. Controlla che 'jspdf' sia installato (npm install jspdf).");
-    }
+  function pdfProduzione(mode: PdfMode) {
+    makeProductionPDF(order, mode);
   }
 
-  // =========================
-  // UI styles
-  // =========================
-  const inputBase: CSSProperties = {
-    padding: 12,
-    border: `1px solid ${UI.border}`,
-    borderRadius: 12,
-    background: UI.card,
-    outline: "none",
-    color: UI.text,
-    fontSize: 16,
-    lineHeight: "20px",
-    width: "100%",
-    boxSizing: "border-box"
-  };
+  // form add item
+  const [form, setForm] = useState({
+    codeSP: "",
+    category: "Felpa",
+    line: "Performance",
+    description: "",
+    color: "Navy",
+  });
 
-  const label: CSSProperties = {
-    fontSize: 12,
-    fontWeight: 900,
-    color: UI.muted,
-    marginBottom: 6
-  };
-
-  const pill: CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "8px 12px",
-    borderRadius: 999,
-    border: `1px solid rgba(255,255,255,.28)`,
-    background: "rgba(255,255,255,.12)",
-    fontWeight: 900,
-    fontSize: 12
-  };
-
-  const filteredArchive = useMemo(() => {
-    const q = archiveQuery.trim().toLowerCase();
-    return archive.filter(o => {
-      const statusOk = archiveStatus === "ALL" ? true : o.status === archiveStatus;
-      if (!statusOk) return false;
-      if (!q) return true;
-      const hay = `${o.orderId} ${o.club}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [archive, archiveQuery, archiveStatus]);
-
-  // =========================
-  // UI actions
-  // =========================
-  function updateOrderClientField<K extends keyof ClientInfo>(k: K, v: string) {
-    setClientField(k, v);
-  }
+  const statusClass = order.status === "CONFERMATO" ? "pill ok" : "pill warn";
 
   return (
-    <div style={{ minHeight: "100vh", background: UI.bg, color: UI.text }}>
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: 22 }}>
-        {/* Header */}
-        <div style={{
-          background: `linear-gradient(135deg, ${UI.navy} 0%, ${UI.blue} 55%, ${UI.cyan} 110%)`,
-          borderRadius: 18,
-          padding: "18px 18px",
-          color: "white",
-          boxShadow: "0 14px 40px rgba(2,6,23,.14)"
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: -0.5 }}>DOUBLEU Order App</div>
-              <div style={{ opacity: 0.9, marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <div style={pill}>Ordine interno: {order.orderId}</div>
-                <div style={pill}>Totale: {totalPieces} pz</div>
-                <div style={{ ...pill, borderColor: "rgba(255,255,255,.35)" }}>
-                  Stato:&nbsp;
-                  <span style={{ fontWeight: 1000, color: order.status === "CONFIRMED" ? "#BBF7D0" : "#FEF08A" }}>
-                    {order.status === "CONFIRMED" ? "CONFERMATO" : "BOZZA"}
-                  </span>
-                </div>
-              </div>
-              {locked && (
-                <div style={{ marginTop: 8, fontSize: 12, opacity: .92 }}>
-                  🔒 Ordine confermato: modifiche bloccate.
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button onClick={toggleStatus} style={topBtn(order.status === "CONFIRMED" ? "ghost" : "solid")}>
-                {order.status === "CONFIRMED" ? "Torna in BOZZA" : "Conferma ordine"}
-              </button>
-              <button onClick={saveCurrentToArchive} style={topBtn("ghost")}>Salva</button>
-              <button onClick={() => setShowArchive(true)} style={topBtn("ghost")}>Archivio</button>
-              <button onClick={duplicateCurrentOrder} style={topBtn("ghost")}>Duplica</button>
-              <button onClick={newOrder} style={topBtn("ghost")}>Nuovo</button>
+    <div className="page">
+      <div className="topbar">
+        <div className="topbar-inner">
+          <div className="brand">
+            <div className="brand-title">DOUBLEU Order App</div>
+            <div className="pills">
+              <div className="pill dark">Ordine interno: <b>{order.internalId}</b></div>
+              <div className="pill dark">Totale: <b>{total} pz</b></div>
+              <div className={statusClass}>Stato: <b>{order.status}</b></div>
             </div>
           </div>
 
-          {/* PDF + Print */}
-          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={() => generateClientPDF("download")} style={topBtn("solid")}>
-              PDF Cliente
-            </button>
-            <button onClick={() => generateClientPDF("print")} style={topBtn("ghost")}>
-              Stampa Cliente
-            </button>
+          <div className="actions">
+            <button className="btn primary" onClick={confirmOrder}>Conferma ordine</button>
+            <button className="btn" onClick={saveToArchive}>Salva</button>
+            <ArchiveMenu
+              archive={archive}
+              onLoad={loadFromArchive}
+              onDelete={deleteFromArchive}
+            />
+            <button className="btn" onClick={duplicateOrder}>Duplica</button>
+            <button className="btn" onClick={newOrder}>Nuovo</button>
+          </div>
 
-            <button onClick={() => generateProductionPDF("download")} style={topBtn("ghost")}>
-              PDF Produzione
-            </button>
-            <button onClick={() => generateProductionPDF("print")} style={topBtn("ghost")}>
-              Stampa Produzione
-            </button>
+          <div className="actions secondary">
+            <button className="btn white" onClick={() => pdfCliente("download")}>PDF Cliente</button>
+            <button className="btn" onClick={() => pdfCliente("print")}>Stampa Cliente</button>
+            <button className="btn white" onClick={() => pdfProduzione("download")}>PDF Produzione</button>
+            <button className="btn" onClick={() => pdfProduzione("print")}>Stampa Produzione</button>
+            <button className="btn" onClick={exportOrderJSON}>Export ordine</button>
+            <button className="btn" onClick={exportArchiveJSON}>Export archivio</button>
 
-            <button onClick={() => openExport("CURRENT")} style={topBtn("ghost")}>Export ordine</button>
-            <button onClick={() => openExport("ALL")} style={topBtn("ghost")}>Export archivio</button>
-            <button onClick={() => setShowImport(true)} style={topBtn("ghost")}>Import JSON</button>
+            <label className="btn file">
+              Import JSON
+              <input
+                type="file"
+                accept="application/json"
+                onChange={(e) => importJSON(e.target.files?.[0] ?? null)}
+              />
+            </label>
           </div>
         </div>
+      </div>
 
-        {/* Club */}
-        <div style={{ marginTop: 14, background: UI.card, border: `1px solid ${UI.border}`, borderRadius: 16, padding: 14 }}>
-          <div style={label}>Club</div>
-          <div style={{ maxWidth: 560 }}>
+      <div className="content">
+        <div className="card">
+          <div className="field">
+            <label>Club</label>
             <input
               value={order.club}
-              onChange={(e) => setClub(e.target.value)}
-              placeholder="Es. TC Valencia"
-              style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-              disabled={locked}
+              onChange={(e) => touch({ club: e.target.value })}
+              placeholder="Es. Tennis club"
             />
           </div>
         </div>
 
-        {/* Dati Cliente / Spedizione (facoltativi) */}
-        <div style={{ marginTop: 12, ...card }}>
-          <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>Dati cliente / spedizione (facoltativi)</div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-            <div>
-              <div style={label}>Nome cliente</div>
-              <input
-                value={order.client?.name || ""}
-                onChange={(e) => updateOrderClientField("name", e.target.value)}
-                placeholder="Es. Marco Rossi"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
+        <div className="grid2">
+          <div className="card">
+            <div className="card-title">Dati cliente / spedizione (facoltativi)</div>
+            <div className="grid3">
+              <div className="field">
+                <label>Nome cliente</label>
+                <input value={order.client.name} onChange={(e) => updateClient({ name: e.target.value })} placeholder="Nome" />
+              </div>
+              <div className="field">
+                <label>Indirizzo</label>
+                <input value={order.client.address} onChange={(e) => updateClient({ address: e.target.value })} placeholder="Via, n..." />
+              </div>
+              <div className="field">
+                <label>Città</label>
+                <input value={order.client.city} onChange={(e) => updateClient({ city: e.target.value })} placeholder="Città" />
+              </div>
+              <div className="field">
+                <label>CAP</label>
+                <input value={order.client.cap} onChange={(e) => updateClient({ cap: e.target.value })} placeholder="Es. 46001" />
+              </div>
+              <div className="field">
+                <label>Nazione</label>
+                <input value={order.client.country} onChange={(e) => updateClient({ country: e.target.value })} placeholder="Es. Italia" />
+              </div>
+              <div className="field">
+                <label>Email</label>
+                <input value={order.client.email} onChange={(e) => updateClient({ email: e.target.value })} placeholder="nome@email.com" />
+              </div>
             </div>
-
-            <div style={{ gridColumn: "span 2" }}>
-              <div style={label}>Indirizzo</div>
-              <input
-                value={order.client?.address || ""}
-                onChange={(e) => updateOrderClientField("address", e.target.value)}
-                placeholder="Via..., n..."
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
-            </div>
-
-            <div>
-              <div style={label}>Città</div>
-              <input
-                value={order.client?.city || ""}
-                onChange={(e) => updateOrderClientField("city", e.target.value)}
-                placeholder="Es. Valencia"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
-            </div>
-
-            <div>
-              <div style={label}>CAP</div>
-              <input
-                value={order.client?.zip || ""}
-                onChange={(e) => updateOrderClientField("zip", e.target.value)}
-                placeholder="Es. 46001"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
-            </div>
-
-            <div>
-              <div style={label}>Nazione</div>
-              <input
-                value={order.client?.country || ""}
-                onChange={(e) => updateOrderClientField("country", e.target.value)}
-                placeholder="Es. Spain"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
-            </div>
-
-            <div>
-              <div style={label}>Email</div>
-              <input
-                value={order.client?.email || ""}
-                onChange={(e) => updateOrderClientField("email", e.target.value)}
-                placeholder="nome@email.com"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
-            </div>
+            <div className="hint">Se lasci vuoti questi campi, non compariranno nel PDF Cliente.</div>
           </div>
 
-          <div style={{ marginTop: 10, fontSize: 12, color: UI.muted }}>
-            Se lasci vuoti questi campi, non compariranno nel PDF Cliente.
+          <div className="card">
+            <div className="card-title">Note</div>
+            <div className="field">
+              <label>Note per il cliente (facoltative)</label>
+              <textarea
+                rows={3}
+                value={order.clientNote}
+                onChange={(e) => touch({ clientNote: e.target.value })}
+                placeholder="Es. consegna stimata in 35 gg lavorativi"
+              />
+            </div>
+
+            <div className="divider" />
+
+            <div className="field">
+              <label>Note generali produzione (interne)</label>
+              <textarea
+                rows={3}
+                value={order.productionGeneralNote}
+                onChange={(e) => touch({ productionGeneralNote: e.target.value })}
+                placeholder="Es. Felpa con piping bianco su manica raglan"
+              />
+            </div>
           </div>
         </div>
 
-        {/* Notes */}
-        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
-          <div style={card}>
-            <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>Note per il cliente (facoltative)</div>
-            <textarea
-              value={order.clientNote}
-              onChange={(e) => setClientNote(e.target.value)}
-              placeholder="Esempio: consegna stimata, richieste di approvazione, ecc."
-              style={{ ...textareaBase, opacity: locked ? .6 : 1 }}
-              disabled={locked}
-            />
-          </div>
-
-          <div style={card}>
-            <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>Note generali produzione (interne)</div>
-            <textarea
-              value={order.productionNote}
-              onChange={(e) => setProductionNote(e.target.value)}
-              placeholder="Esempio: dettagli lavorazione, note su stampa/ricamo, particolarità."
-              style={{ ...textareaBase, opacity: locked ? .6 : 1 }}
-              disabled={locked}
-            />
-          </div>
+        <div className="card">
+          <div className="card-title">Condizioni Generali di Vendita (PDF Cliente)</div>
+          <ol className="cgv">
+            <li>Le quantità e le taglie devono essere verificate prima della conferma definitiva.</li>
+            <li>L’ordine entrerà in produzione solo dopo conferma scritta.</li>
+            <li>Eventuali modifiche successive alla conferma potranno comportare variazioni di costo e tempistiche.</li>
+            <li>I tempi di consegna decorrono dalla conferma definitiva.</li>
+            <li>I prodotti personalizzati non sono soggetti a reso.</li>
+          </ol>
         </div>
 
-        {/* Conditions */}
-        <div style={{ marginTop: 12, ...card }}>
-          <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>
-            Condizioni Generali di Vendita (PDF Cliente)
-          </div>
+        <div className="card">
+          <div className="card-title">Aggiungi Articolo</div>
 
-          <textarea
-            value={order.conditions}
-            onChange={(e) => setConditions(e.target.value)}
-            style={{ ...textareaBase, minHeight: 140, opacity: locked ? .6 : 1 }}
-            disabled={locked}
-          />
-        </div>
-
-        {/* Add item */}
-        <div style={{ marginTop: 12, ...card }}>
-          <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 10 }}>Aggiungi Articolo</div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 10,
-              alignItems: "center"
-            }}
-          >
-            <div>
-              <div style={label}>Codice modellista (SP)</div>
-              <input
-                value={spCode}
-                onChange={(e) => setSpCode(e.target.value)}
-                placeholder="Es. SP 206"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
+          <div className="add-grid">
+            <div className="field">
+              <label>Codice modellista (SP) (solo per PDF produzione)</label>
+              <input value={form.codeSP} onChange={(e) => setForm((f) => ({ ...f, codeSP: e.target.value }))} placeholder="Es. SP 206" />
             </div>
-
-            <div>
-              <div style={label}>Categoria</div>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as Category)}
-                style={{ ...inputBase, paddingRight: 30, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              >
-                {Object.keys(CAT_LABEL).map((k) => (
-                  <option key={k} value={k}>{CAT_LABEL[k as Category]}</option>
-                ))}
+            <div className="field">
+              <label>Categoria</label>
+              <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}>
+                <option>Felpa</option>
+                <option>T-shirt</option>
+                <option>Polo</option>
+                <option>Pantalone</option>
+                <option>Gonna</option>
+                <option>Abito</option>
+                <option>Tuta</option>
               </select>
             </div>
-
-            <div>
-              <div style={label}>Linea</div>
-              <select
-                value={line}
-                onChange={(e) => setLine(e.target.value as Line)}
-                style={{ ...inputBase, paddingRight: 30, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              >
-                <option value="PERF">Performance</option>
-                <option value="ESS">Essential (basic)</option>
+            <div className="field">
+              <label>Linea</label>
+              <select value={form.line} onChange={(e) => setForm((f) => ({ ...f, line: e.target.value }))}>
+                <option>Performance</option>
+                <option>Essential</option>
               </select>
             </div>
-
-            <div style={{ gridColumn: "span 2" }}>
-              <div style={label}>Descrizione</div>
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Es. Felpa zip cappuccio stripe"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
+            <div className="field">
+              <label>Descrizione</label>
+              <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="Es. felpa zip cappuccio" />
+            </div>
+            <div className="field">
+              <label>Colore</label>
+              <input value={form.color} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))} placeholder="Navy" />
             </div>
 
-            <div>
-              <div style={label}>Colore</div>
-              <input
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                placeholder="Es. Navy"
-                style={{ ...inputBase, opacity: locked ? .6 : 1 }}
-                disabled={locked}
-              />
-            </div>
-
-            <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
-              <button
-                onClick={addItem}
-                style={primaryBtn(locked)}
-                disabled={locked}
-              >
-                Aggiungi
-              </button>
-
-              <button
-                onClick={addSetTracksuit}
-                style={softBtn(locked)}
-                disabled={locked}
-                title="Aggiunge 2 righe separate: Felpa + Pantalone felpa"
-              >
-                + Set (Felpa + Pantalone)
-              </button>
+            <div className="add-actions">
+              <button className="btn primary" onClick={() => addItem(false)}>Aggiungi</button>
+              <button className="btn soft" onClick={() => addItem(true)}>+ Set (Felpa + Pantalone)</button>
             </div>
           </div>
 
-          <div style={{ marginTop: 10, fontSize: 12, color: UI.muted }}>
-            Il PDF Cliente non mostra il numero ordine. Il PDF Produzione include SP + DU, note e ordine interno.
+          <div className="hint">
+            Il PDF Cliente non mostra il numero ordine interno. Il PDF Produzione include SP + DU, note e ordine interno.
           </div>
         </div>
 
-        {/* Items */}
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Articoli</div>
+        <div className="card">
+          <div className="card-title">Articoli</div>
 
-          {order.items.length === 0 && <div style={{ color: UI.muted }}>Nessun articolo inserito.</div>}
-
-          {order.items.map((it) => (
-            <div key={it.id} style={itemCard}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 4 }}>{it.description}</div>
-                  <div style={{ fontSize: 13, color: UI.muted, marginBottom: 6 }}>
-                    {CAT_LABEL[it.category]} • {it.line === "PERF" ? "Performance" : "Essential"} • Colore: <b style={{ color: UI.text }}>{it.color}</b>
-                  </div>
-                  <div style={{ fontSize: 13, color: UI.muted }}>
-                    DU: <b style={{ color: UI.text }}>{it.du}</b> • Totale articolo: <b style={{ color: UI.text }}>{sumSizes(it.sizes)}</b>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => removeItem(it.id)}
-                  style={{
-                    padding: "10px 12px",
-                    background: "white",
-                    border: `1px solid ${UI.border}`,
-                    borderRadius: 12,
-                    cursor: locked ? "not-allowed" : "pointer",
-                    color: UI.danger,
-                    fontWeight: 900,
-                    flexShrink: 0,
-                    opacity: locked ? .55 : 1
-                  }}
-                  disabled={locked}
-                >
-                  Elimina
-                </button>
-              </div>
-
-              {/* Note produzione articolo */}
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 900, color: UI.muted, marginBottom: 8 }}>
-                  Nota produzione (per articolo)
-                </div>
-                <textarea
-                  value={it.productionNote}
-                  onChange={(e) => updateItemNote(it.id, e.target.value)}
-                  placeholder="Es. stampa lato cuore, variante bordino, zip, ecc."
-                  style={{ ...textareaBase, minHeight: 80, opacity: locked ? .6 : 1 }}
-                  disabled={locked}
-                />
-              </div>
-
-              {/* Taglie */}
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 900, color: UI.muted, marginBottom: 8 }}>
-                  Quantità per taglia
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
-                    gap: 10,
-                    opacity: locked ? .65 : 1
-                  }}
-                >
-                  {ALL.map((size) => {
-                    const current = it.sizes[size];
-                    return (
-                      <div key={size} style={sizeCard}>
-                        <div style={{ fontSize: 12, fontWeight: 900, color: UI.muted }}>{size}</div>
-                        <input
-                          type="number"
-                          min={0}
-                          inputMode="numeric"
-                          value={current === 0 ? "" : String(current)}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === "") return updateSize(it.id, size, 0);
-                            updateSize(it.id, size, parseInt(raw, 10) || 0);
-                          }}
-                          placeholder="—"
-                          style={qtyInput}
-                          disabled={locked}
-                        />
+          {order.items.length === 0 ? (
+            <div className="empty">Nessun articolo ancora. Aggiungi il primo articolo sopra.</div>
+          ) : (
+            <div className="items">
+              {order.items.map((it) => (
+                <div className="itemCard" key={it.id}>
+                  <div className="itemTop">
+                    <div>
+                      <div className="itemName">{it.category}{it.description ? ` • ${it.description}` : ""}</div>
+                      <div className="itemMeta">
+                        <span>{it.category}</span> • <span>{it.line}</span> • <span>Colore: <b>{it.color || "-"}</b></span> •{" "}
+                        <span>DU: <b>{order.internalId}</b></span> •{" "}
+                        <span>Totale articolo: <b>{sumQty(it.qty)}</b></span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ height: 30 }} />
-
-        {/* ===== Modale Archivio ===== */}
-        {showArchive && (
-          <div style={modalWrap}>
-            <div style={modalCard}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div style={{ fontSize: 18, fontWeight: 1000 }}>Archivio ordini</div>
-                <button onClick={() => setShowArchive(false)} style={modalClose}>Chiudi</button>
-              </div>
-
-              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 220px", gap: 10 }}>
-                <input
-                  value={archiveQuery}
-                  onChange={(e) => setArchiveQuery(e.target.value)}
-                  placeholder="Cerca per Club o Order ID (interno)"
-                  style={{ ...inputBase }}
-                />
-                <select
-                  value={archiveStatus}
-                  onChange={(e) => setArchiveStatus(e.target.value as any)}
-                  style={{ ...inputBase, paddingRight: 30 }}
-                >
-                  <option value="ALL">Tutti</option>
-                  <option value="DRAFT">Bozza</option>
-                  <option value="CONFIRMED">Confermato</option>
-                </select>
-              </div>
-
-              <div style={{ marginTop: 12, maxHeight: 420, overflow: "auto", border: `1px solid ${UI.border}`, borderRadius: 12 }}>
-                {filteredArchive.length === 0 && (
-                  <div style={{ padding: 12, color: UI.muted }}>Nessun ordine trovato.</div>
-                )}
-
-                {filteredArchive.map((o) => (
-                  <div
-                    key={o.orderId}
-                    onClick={() => loadOrderFromArchive(o.orderId)}
-                    style={{
-                      padding: 12,
-                      borderBottom: `1px solid ${UI.border}`,
-                      cursor: "pointer",
-                      background: o.orderId === order.orderId ? UI.soft : "white"
-                    }}
-                  >
-                    <div style={{ fontWeight: 900 }}>
-                      {o.orderId} • {o.status === "CONFIRMED" ? "CONFERMATO" : "BOZZA"}
                     </div>
-                    <div style={{ fontSize: 12, color: UI.muted, marginTop: 2 }}>
-                      {o.club || "—"} • Aggiornato: {new Date(o.updatedAtISO).toLocaleString("it-IT")}
+                    <button className="btn danger" onClick={() => removeItem(it.id)}>Elimina</button>
+                  </div>
+
+                  <div className="field">
+                    <label>Nota produzione (per articolo) (interna)</label>
+                    <input
+                      value={it.productionNote}
+                      onChange={(e) => updateItem(it.id, { productionNote: e.target.value })}
+                      placeholder="Es. stampa lato cuore, variante bordino, zip, ecc."
+                    />
+                  </div>
+
+                  {/* Riquadro sfondo + griglia quantità DENTRO */}
+                  <div className="qtyBox">
+                    <div className="qtyTitle">Quantità per taglia</div>
+
+                    <div className="qtySectionTitle">Taglie Bambino</div>
+                    <div className="qtyGrid">
+                      {CHILD_SIZES.map((s) => (
+                        <QtyCell
+                          key={s}
+                          label={s}
+                          value={it.qty[s] || 0}
+                          onChange={(v) => updateQty(it.id, s, v)}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="qtySectionTitle">Taglie Adulto</div>
+                    <div className="qtyGrid">
+                      {ADULT_SIZES.map((s) => (
+                        <QtyCell
+                          key={s}
+                          label={s}
+                          value={it.qty[s] || 0}
+                          onChange={(v) => updateQty(it.id, s, v)}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="qtyFooter">
+                      <div className="muted">
+                        Codice (solo PDF Produzione): <b>{it.codeSP?.trim() ? it.codeSP : "—"}</b>
+                      </div>
+                      <button
+                        className="btn link"
+                        onClick={() => {
+                          const v = prompt("Inserisci / modifica codice SP (solo produzione):", it.codeSP || "");
+                          if (v === null) return;
+                          updateItem(it.id, { codeSP: v });
+                        }}
+                      >
+                        Modifica
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-                <button onClick={newOrder} style={modalBtnPrimary}>Nuovo ordine</button>
-                <button onClick={saveCurrentToArchive} style={modalBtn}>Salva ordine corrente</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===== Modale Export ===== */}
-        {showExport && (
-          <div style={modalWrap}>
-            <div style={modalCard}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div style={{ fontSize: 18, fontWeight: 1000 }}>
-                  Export JSON ({exportMode === "CURRENT" ? "ordine corrente" : "archivio"})
                 </div>
-                <button onClick={() => setShowExport(false)} style={modalClose}>Chiudi</button>
-              </div>
-
-              <textarea value={exportText} readOnly style={{ ...textareaBase, marginTop: 12, minHeight: 320, fontSize: 12 }} />
-
-              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  onClick={() => {
-                    navigator.clipboard?.writeText(exportText);
-                    alert("Copiato negli appunti");
-                  }}
-                  style={modalBtnPrimary}
-                >
-                  Copia
-                </button>
-                <button onClick={() => setShowExport(false)} style={modalBtn}>Ok</button>
-              </div>
+              ))}
             </div>
+          )}
+        </div>
+
+        <footer className="foot">
+          <div className="muted">
+            Autosalvataggio attivo • Ultimo update: {fmtITDate(order.updatedAtISO)}
           </div>
-        )}
-
-        {/* ===== Modale Import ===== */}
-        {showImport && (
-          <div style={modalWrap}>
-            <div style={modalCard}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div style={{ fontSize: 18, fontWeight: 1000 }}>Import JSON</div>
-                <button onClick={() => setShowImport(false)} style={modalClose}>Chiudi</button>
-              </div>
-
-              <div style={{ marginTop: 10, color: UI.muted, fontSize: 12 }}>
-                Incolla un JSON di <b>un ordine</b> oppure un JSON di <b>archivio (array)</b>.
-              </div>
-
-              <textarea value={importText} onChange={(e) => setImportText(e.target.value)} style={{ ...textareaBase, marginTop: 12, minHeight: 320, fontSize: 12 }} />
-
-              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button onClick={applyImport} style={modalBtnPrimary}>Importa</button>
-                <button onClick={() => { setImportText(""); setShowImport(false); }} style={modalBtn}>Annulla</button>
-              </div>
-            </div>
-          </div>
-        )}
-
+        </footer>
       </div>
     </div>
   );
 }
 
-/** ===== UI helpers ===== */
-function topBtn(kind: "solid" | "ghost"): CSSProperties {
-  if (kind === "solid") {
-    return {
-      padding: "10px 14px",
-      borderRadius: 12,
-      border: "none",
-      cursor: "pointer",
-      fontWeight: 900,
-      background: "white",
-      color: UI.navy
-    };
+function QtyCell(props: { label: string; value: number; onChange: (v: number) => void }) {
+  const { label, value, onChange } = props;
+
+  function dec() {
+    onChange(Math.max(0, (value || 0) - 1));
   }
-  return {
-    padding: "10px 14px",
-    borderRadius: 12,
-    border: "none",
-    cursor: "pointer",
-    fontWeight: 900,
-    background: "rgba(255,255,255,.18)",
-    color: "white"
-  };
+  function inc() {
+    onChange((value || 0) + 1);
+  }
+
+  return (
+    <div className="qtyCell">
+      <div className="qtyLabel">{label}</div>
+      <div className="qtyControls">
+        <button className="mini" onClick={dec} aria-label="meno">−</button>
+        <input
+          className="qtyInput"
+          value={String(value ?? 0)}
+          inputMode="numeric"
+          onChange={(e) => {
+            const n = Number(e.target.value.replace(/[^\d]/g, ""));
+            onChange(Number.isFinite(n) ? n : 0);
+          }}
+        />
+        <button className="mini" onClick={inc} aria-label="più">+</button>
+      </div>
+    </div>
+  );
 }
 
-function primaryBtn(locked: boolean): CSSProperties {
-  return {
-    padding: "12px 14px",
-    background: UI.blue,
-    color: "white",
-    border: "none",
-    borderRadius: 12,
-    cursor: locked ? "not-allowed" : "pointer",
-    fontWeight: 900,
-    opacity: locked ? .55 : 1
-  };
+function ArchiveMenu(props: {
+  archive: Order[];
+  onLoad: (idx: number) => void;
+  onDelete: (idx: number) => void;
+}) {
+  const { archive, onLoad, onDelete } = props;
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="archWrap">
+      <button className="btn" onClick={() => setOpen((v) => !v)}>Archivio</button>
+      {open && (
+        <div className="archPanel" onMouseLeave={() => setOpen(false)}>
+          {archive.length === 0 ? (
+            <div className="archEmpty">Archivio vuoto.</div>
+          ) : (
+            archive.slice(0, 20).map((o, idx) => (
+              <div className="archRow" key={o.internalId + "_" + idx}>
+                <button className="archBtn" onClick={() => { onLoad(idx); setOpen(false); }}>
+                  <div className="archTitle">
+                    <b>{o.club || "—"}</b> <span className="muted">({o.internalId})</span>
+                  </div>
+                  <div className="archMeta">
+                    Totale {o.items.reduce((a, it) => a + Object.values(it.qty).reduce((x, y) => x + (y || 0), 0), 0)} pz •{" "}
+                    {fmtITDate(o.updatedAtISO)} • <span className={o.status === "CONFERMATO" ? "pill ok miniPill" : "pill warn miniPill"}>{o.status}</span>
+                  </div>
+                </button>
+                <button className="archDel" onClick={() => onDelete(idx)} title="Rimuovi da archivio">✕</button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
-
-function softBtn(locked: boolean): CSSProperties {
-  return {
-    padding: "12px 14px",
-    background: UI.soft,
-    color: UI.navy,
-    border: `1px solid ${UI.border}`,
-    borderRadius: 12,
-    cursor: locked ? "not-allowed" : "pointer",
-    fontWeight: 900,
-    opacity: locked ? .55 : 1
-  };
-}
-
-const card: CSSProperties = {
-  background: UI.card,
-  border: `1px solid ${UI.border}`,
-  borderRadius: 16,
-  padding: 14
-};
-
-const itemCard: CSSProperties = {
-  background: UI.card,
-  border: `1px solid ${UI.border}`,
-  borderRadius: 16,
-  padding: 14,
-  marginBottom: 12,
-  boxShadow: "0 10px 25px rgba(2,6,23,.06)"
-};
-
-const textareaBase: CSSProperties = {
-  width: "100%",
-  minHeight: 92,
-  padding: 12,
-  border: `1px solid ${UI.border}`,
-  borderRadius: 12,
-  fontSize: 16,
-  lineHeight: "20px",
-  boxSizing: "border-box"
-};
-
-const sizeCard: CSSProperties = {
-  background: UI.bg,
-  border: `1px solid ${UI.border}`,
-  borderRadius: 14,
-  padding: 10
-};
-
-const qtyInput: CSSProperties = {
-  marginTop: 8,
-  width: "100%",
-  padding: 10,
-  border: `1px solid ${UI.border}`,
-  borderRadius: 12,
-  background: "white",
-  fontSize: 18,
-  fontWeight: 900,
-  textAlign: "center"
-};
-
-/** ===== Modale styles ===== */
-const modalWrap: CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(2,6,23,.55)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: 14,
-  zIndex: 1000
-};
-
-const modalCard: CSSProperties = {
-  width: "min(920px, 100%)",
-  background: "white",
-  borderRadius: 16,
-  border: "1px solid #E5E7EB",
-  padding: 14,
-  boxShadow: "0 18px 60px rgba(2,6,23,.25)"
-};
-
-const modalClose: CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid #E5E7EB",
-  background: "white",
-  cursor: "pointer",
-  fontWeight: 900
-};
-
-const modalBtnPrimary: CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 12,
-  border: "none",
-background: `rgb(11, 31, 59)`,
-  color: "white",
-  cursor: "pointer",
-  fontWeight: 900
-};
-
-const modalBtn: CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 12,
- border: `1px solid rgb(229, 231, 235)`,
-  background: "white",
-  cursor: "pointer",
-  fontWeight: 900
-};
