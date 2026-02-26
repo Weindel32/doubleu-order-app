@@ -212,14 +212,47 @@ function openBlobForPrint(doc: jsPDF) {
   });
 }
 
+function makeClubCode(club: string) {
+  const clean = (club || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const parts = clean.split(" ").filter(Boolean);
+
+  if (parts.length === 0) return "CLUB";
+
+  if (parts[0].length <= 2 && parts.length >= 2) {
+    return (parts[0] + parts[1]).slice(0, 4);
+  }
+
+  return parts[0].slice(0, 3);
+}
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+function makeCustomerRef(order: Order) {
+  const code = makeClubCode(order?.club || "");
+  const d = order?.updatedAtISO ? new Date(order.updatedAtISO) : new Date();
+  const yy = String(d.getFullYear()).slice(-2);
+  const mm = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  return `${code}-${yy}${mm}${dd}`;
+}
 function makeClientPDF(order: Order, mode: PdfMode) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 32;
   const contentW = pageW - margin * 2;
-
-  pdfHeader(doc, `BOZZA ORDINE • ${fmtITDate(order.updatedAtISO)}`, `Totale pezzi: ${totalPieces(order)}`);
+  const customerRef = makeCustomerRef(order);
+  pdfHeader(
+  doc,
+  `Conferma Ordine`,
+  `Riferimento: ${customerRef}`
+);
 
   let y = 48;
 
@@ -227,8 +260,43 @@ function makeClientPDF(order: Order, mode: PdfMode) {
   pdfCard(doc, margin, y, contentW, 70);
   pdfText(doc, `Club: ${order.club || "-"}`, margin + 12, y + 22, 11, true);
   pdfText(doc, `Data: ${fmtITDate(order.updatedAtISO)}`, margin + 12, y + 40, 10, false);
-  if (order.client.name.trim()) pdfText(doc, `Cliente: ${order.client.name}`, margin + 12, y + 56, 10, false);
-  y += 86;
+
+ // --- BLOCCO CLIENTE PROFESSIONALE ---
+let clientY = y + 58;
+
+if (order.client.name?.trim()) {
+  pdfText(doc, order.client.name.trim(), margin + 12, clientY, 12);
+  clientY += 16;
+}
+
+if (order.client.address?.trim()) {
+  pdfText(doc, order.client.address.trim(), margin + 12, clientY, 11);
+  clientY += 14;
+}
+
+if (order.client.cap?.trim() || order.client.city?.trim()) {
+  pdfText(
+    doc,
+    `${order.client.cap || ""} ${order.client.city || ""}`.trim(),
+    margin + 12,
+    clientY,
+    11
+  );
+  clientY += 14;
+}
+
+if (order.client.country?.trim()) {
+  pdfText(
+    doc,
+    `Nazione: ${order.client.country.trim()}`,
+    margin + 12,
+    clientY,
+    11
+  );
+  clientY += 14;
+}
+// --- FINE INDIRIZZO ---
+  y += 120;
 
   // Riepilogo articoli
   pdfText(doc, "Riepilogo articoli", margin, y, 12, true);
