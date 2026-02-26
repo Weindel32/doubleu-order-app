@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import  { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import jsPDF from "jspdf";
 
@@ -120,26 +120,42 @@ function deepClone<T>(x: T): T {
 /** -------------------- PDF HELPERS (senza autotable) -------------------- */
 type PdfMode = "download" | "print";
 
-function pdfHeader(doc: jsPDF, title: string, subtitleRight?: string) {
+function pdfHeader(
+  doc: jsPDF,
+  _title: string,
+  subtitleRight?: string,
+  accent?: { r: number; g: number; b: number }
+) {
   const w = doc.internal.pageSize.getWidth();
   // top bar
-  doc.setFillColor(11, 31, 59);
+  const a = accent ?? { r: 11, g: 31, b: 59 };
+  doc.setFillColor(a.r, a.g, a.b);
   doc.rect(0, 0, w, 32, "F");
-
+  doc.setDrawColor(255, 255, 255);
+doc.setLineWidth(0.4);
+doc.line(0, 32, w, 32);
+doc.setDrawColor(255, 255, 255);
+doc.setLineWidth(0.6);
+doc.line(0, 32, w, 32);
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
   doc.text("DOUBLEU", 14, 20);
-
+doc.setFontSize(8.5);
+doc.setFont("helvetica", "normal");
+doc.setTextColor(235, 235, 235);
+doc.text("MADE IN ITALY · PREMIUM CLUBWEAR", 14, 29);
+doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(title, 14, 27);
+  doc.setFont("helvetica", "bold");
+doc.setFontSize(12);
+doc.setFont("helvetica", "normal");
 
   if (subtitleRight) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    const tw = doc.getTextWidth(subtitleRight);
-    doc.text(subtitleRight, w - 14 - tw, 27);
+    doc.text(subtitleRight, w - 14, 20, { align: "right" });
   }
 
   doc.setTextColor(0, 0, 0);
@@ -234,73 +250,148 @@ function pad2(n: number) {
 }
 
 function makeCustomerRef(order: Order) {
-  const code = makeClubCode(order?.club || "");
-  const d = order?.updatedAtISO ? new Date(order.updatedAtISO) : new Date();
-  const yy = String(d.getFullYear()).slice(-2);
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  return `${code}-${yy}${mm}${dd}`;
+const code = makeClubCode(order?.club || "");
+const d = order?.updatedAtISO ? new Date(order.updatedAtISO) : new Date();
+const yy = String(d.getFullYear()).slice(-2);
+const mm = pad2(d.getMonth() + 1);
+const dd = pad2(d.getDate());
+return `${code}-${yy}${mm}${dd}`;
 }
+function getClubAccentColor(club?: string): { r: number; g: number; b: number } {
+  const key = (club || "").trim().toLowerCase();
+
+  const DEFAULT = { r: 11, g: 32, b: 59 };
+
+  const MAP: Record<string, { r: number; g: number; b: number }> = {
+    "eco village": { r: 11, g: 32, b: 59 },
+  };
+
+  return MAP[key] || DEFAULT;
+}
+
 function makeClientPDF(order: Order, mode: PdfMode) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const accent = getClubAccentColor(order.club);
   const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
   const margin = 32;
   const contentW = pageW - margin * 2;
   const customerRef = makeCustomerRef(order);
-  pdfHeader(
+  const title = "Dettaglio Ordine";
+ pdfHeader(
   doc,
-  `Conferma Ordine`,
-  `Riferimento: ${customerRef}`
+  title,
+  `Riferimento: ${customerRef}`,
+  accent
 );
 
   let y = 48;
-
   // Info card
   pdfCard(doc, margin, y, contentW, 70);
   pdfText(doc, `Club: ${order.club || "-"}`, margin + 12, y + 22, 11, true);
   pdfText(doc, `Data: ${fmtITDate(order.updatedAtISO)}`, margin + 12, y + 40, 10, false);
+// dopo Club e Data
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text(
+    `Totale ordine: € 0,00`,
+    margin + contentW - 12,
+    y + 58,
+    { align: "right" }
+  );
+  doc.setFont("helvetica", "normal");
+  // Se NON hai ancora i prezzi, questo sarà 0
+ // dopo Club e Data
+const SHOW_TOTAL = true;
 
+if (SHOW_TOTAL) {
+  // TODO: calcolare il totale quando aggiungerai i prezzi agli articoli
+  const orderTotal = 0;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text(
+    `Totale ordine: € ${orderTotal.toFixed(2)}`,
+    margin + contentW - 12,
+    y + 58,
+    { align: "right" }
+  );
+  doc.setFont("helvetica", "normal");
+}
  // --- BLOCCO CLIENTE PROFESSIONALE ---
 let clientY = y + 58;
+// calcolo altezza blocco cliente
+let blockHeight = 0;
+
+if (order.client.name?.trim()) blockHeight += 16;
+if (order.client.address?.trim()) blockHeight += 14;
+if (order.client.cap?.trim() || order.client.city?.trim()) blockHeight += 14;
+if (order.client.country?.trim()) blockHeight += 14;
+
+// disegno sfondo unico (anti-banding)
+doc.setFillColor(243, 244, 246);
+
+// 1) rettangolo pieno sotto (super stabile)
+doc.rect(margin, clientY - 12, contentW, blockHeight + 16, "F");
+
+// 2) opzionale: rounded sopra per estetica (stesso colore)
+doc.roundedRect(margin, clientY - 12, contentW, blockHeight + 16, 6, 6, "F");
+const rightX = margin + contentW - 12;
 
 if (order.client.name?.trim()) {
-  pdfText(doc, order.client.name.trim(), margin + 12, clientY, 12);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text(order.client.name.trim(), rightX, clientY, { align: "right" });
   clientY += 16;
 }
 
+doc.setFont("helvetica", "normal");
+doc.setFontSize(12);
+
 if (order.client.address?.trim()) {
-  pdfText(doc, order.client.address.trim(), margin + 12, clientY, 11);
+  doc.text(order.client.address.trim(), rightX, clientY, { align: "right" });
   clientY += 14;
 }
 
 if (order.client.cap?.trim() || order.client.city?.trim()) {
-  pdfText(
-    doc,
-    `${order.client.cap || ""} ${order.client.city || ""}`.trim(),
-    margin + 12,
-    clientY,
-    11
-  );
+  const capCity = `${order.client.cap || ""} ${order.client.city || ""}`.trim();
+  doc.text(capCity, rightX, clientY, { align: "right" });
   clientY += 14;
 }
 
 if (order.client.country?.trim()) {
-  pdfText(
-    doc,
-    `Nazione: ${order.client.country.trim()}`,
-    margin + 12,
-    clientY,
-    11
-  );
+  doc.text(order.client.country.trim(), rightX, clientY, { align: "right" });
   clientY += 14;
 }
-// --- FINE INDIRIZZO ---
-  y += 120;
+y = Math.max(y, clientY) + 20;
 
-  // Riepilogo articoli
-  pdfText(doc, "Riepilogo articoli", margin, y, 12, true);
-  y += 10;
+
+
+
+// --- FINE INDIRIZZO ---
+// porta y appena sotto l’ultimo elemento stampato nel blocco cliente
+y = Math.max(y, clientY) + 24;   // prova 24 (più vicino). Se lo vuoi ancora più su: 18.
+
+// Riepilogo articoli
+
+// Spazio maggiore tra indirizzo e titolo
+y += 18;
+
+// Titolo
+doc.setFont("helvetica", "normal");
+doc.setFontSize(13);
+doc.setTextColor(70, 70, 70);
+doc.text("DETTAGLIO ORDINE", margin, y);
+
+// Linea proporzionata
+doc.setDrawColor(220, 220, 220);
+doc.setLineWidth(0.5);
+doc.line(margin, y + 6, margin + contentW, y + 6);
+
+// Reset
+doc.setFontSize(11);
+doc.setTextColor(0, 0, 0);
+
+y += 22;
 
   const items = order.items;
 
@@ -780,10 +871,12 @@ export default function App() {
               <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}>
                 <option>Felpa</option>
                 <option>T-shirt</option>
+                <option>T-Shirt Donna</option>
+                <option value="Pantaloncino">Pantaloncino</option>
                 <option>Polo</option>
                 <option>Pantalone</option>
-                <option>Gonna</option>
-                <option>Abito</option>
+                <option>Gonnellino</option>
+                <option>Dress</option>
                 <option>Tuta</option>
               </select>
             </div>

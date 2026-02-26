@@ -436,3 +436,18 @@ html, body {
 .content{
   margin-top: 0;
 }
+/* Blocco anagrafica (sotto il titolo Club) */
+.client-block {
+  background: #f3f4f6;      /* grigio uniforme */
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.client-block * {
+  background: transparent !important; /* evita bande per riga */
+}
+
+.client-block p {
+  margin: 0;
+  line-height: 1.35;
+}
