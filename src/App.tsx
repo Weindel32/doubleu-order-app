@@ -438,41 +438,199 @@ y += 22;
   pdfText(doc, "Note", margin, y2 + 10, 12, true);
   y2 += 20;
 
-  pdfCard(doc, margin, y2, contentW, 80);
+  pdfCard(doc, margin, y2, contentW, 60);
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   const note = order.clientNote?.trim() ? order.clientNote.trim() : "-";
   doc.text(doc.splitTextToSize(note, contentW - 24), margin + 12, y2 + 22);
-  y2 += 100;
+  y2 += 70;
+// ===== Condizioni sotto le NOTE =====
+y2 += 12;
+pdfText(doc, "Condizioni Generali di Vendita", margin, y2, 12, true);
+y2 += 24;
 
-  pdfText(doc, "Verifica e conferma", margin, y2, 12, true);
-  y2 += 14;
-  pdfText(
-    doc,
-    "Ti prego di verificare attentamente quantità e taglie. L’ordine entrerà in produzione solo dopo conferma scritta.",
-    margin,
-    y2,
-    10,
-    false
-  );
-  y2 += 24;
+doc.setFont("helvetica", "normal");
+doc.setFontSize(7.5);
 
-  pdfText(doc, "Condizioni Generali di Vendita", margin, y2, 12, true);
-  y2 += 12;
+const termsText = `
 
-  const cgv = [
-    "1. Le quantità e le taglie devono essere verificate prima della conferma definitiva.",
-    "2. L’ordine entrerà in produzione solo dopo conferma scritta.",
-    "3. Eventuali modifiche successive alla conferma potranno comportare variazioni di costo e tempistiche.",
-    "4. I tempi di consegna decorrono dalla conferma definitiva.",
-    "5. I prodotti personalizzati non sono soggetti a reso.",
-  ];
-  doc.setFontSize(10);
-  doc.text(cgv, margin, y2 + 14);
+1. Oggetto
 
-  if (mode === "print") openBlobForPrint(doc);
-  else doc.save(`DOUBLEU_ordine_${order.club || "cliente"}_${fmtITDate(order.updatedAtISO).replaceAll("/", "-")}.pdf`);
+Le presenti condizioni regolano la vendita di prodotti personalizzati a marchio DOUBLEU.
+
+Tutti i prodotti sono realizzati su richiesta e personalizzati secondo le specifiche approvate dal cliente.
+<HR>
+2. Conferma dell’Ordine
+
+L’ordine si considera confermato esclusivamente al verificarsi congiunto di:
+• Firma del foglio d’ordine
+• Approvazione grafica definitiva (design, colori, loghi, taglie, quantità)
+• Versamento dell’acconto previsto e concordato
+<HR>
+3. Produzione e Tempistiche
+
+I tempi di produzione decorrono dalla data di:
+• Conferma grafica definitiva
+• Ricezione dell’acconto
+
+Le tempistiche concordate sono indicative e possono subire variazioni per cause di forza maggiore (ritardi fornitori, trasporti, eventi straordinari).
+
+DOUBLEU si impegna a rispettare le tempistiche concordate al momento della conferma.
+<HR>
+4. Prodotti Personalizzati
+
+Essendo prodotti realizzati su misura e personalizzati:
+• Non è previsto diritto di recesso
+• Non è possibile annullare l’ordine dopo l’avvio della produzione
+• Non sono accettati resi per errori di taglia comunicati dal cliente
+
+Il cliente è responsabile della correttezza di:
+• Quantità
+• Taglie
+• Ortografia dei loghi/nominativi
+• Specifiche tecniche approvate
+<HR>
+5. Tolleranze
+
+Sono da considerarsi normali:
+• Lievi variazioni cromatiche tra schermo e prodotto finito
+• Tolleranze dimensionali tipiche della produzione tessile
+• Leggere differenze di posizionamento stampa/ricamo
+<HR>
+6. Spedizione
+
+I costi di spedizione sono a carico del cliente, salvo accordi diversi.
+
+Eventuali danni devono essere segnalati al momento della consegna con riserva scritta al corriere.
+<HR>
+7. Pagamenti
+
+Acconto al momento della conferma d’ordine e saldo alla consegna della merce, salvo accordi diversi.
+<HR>
+8. Proprietà del Marchio
+
+Il marchio DOUBLEU è di esclusiva proprietà dell’azienda.
+
+Eventuali utilizzi diversi da quelli concordati devono essere autorizzati per iscritto.
+<HR>
+9. Foro Competente
+
+Per ogni controversia è competente il Foro di Salerno.
+`.trim();
+// ===== Render "pulito" delle condizioni (titoli, bullet, <HR>) =====
+const pageHeight = doc.internal.pageSize.getHeight();
+const maxY = pageHeight - 78; // spazio riservato per la firma in basso
+
+doc.setFont("helvetica", "normal");
+doc.setFontSize(8.4);
+
+const rows = String(termsText).split("\n");
+let yT = y2 + 10; // spazio tra titolo "Condizioni Generali..." e punto 1
+
+for (const raw of rows) {
+  const t = String(raw ?? "").trimEnd();
+
+  // riga vuota = piccolo respiro
+  if (!t.trim()) {
+    yT += 5;
+    continue;
+  }
+
+
+
+  // separatore estetico
+  if (t.trim() === "<HR>") {
+    if (yT > maxY) {
+      doc.addPage();
+      pdfHeader(doc, "CONDIZIONI GENERALI DI VENDITA");
+      yT = 64;
+    }
+    doc.setLineWidth(0.5);
+    doc.line(margin, yT, margin + 60, yT); // riga corta
+    yT += 8;
+    continue;
+  }
+
+  const isSection = /^\d+\.\s/.test(t.trim());
+  const isBullet = /^[-•]\s/.test(t.trim());
+
+  // se non ci sta, vai a pagina nuova (ma lasciando spazio firma)
+  if (yT > maxY) {
+    doc.addPage();
+    pdfHeader(doc, "CONDIZIONI GENERALI DI VENDITA");
+    yT = 64;
+  }
+
+  // Titoli sezione tipo "1. Oggetto"
+  if (isSection) {
+    yT += 3;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.2);
+
+    doc.text(t.trim(), margin, yT);
+    yT += 8;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.4);
+    continue;
+  }
+
+  // Bullet con rientro + wrap
+  if (isBullet) {
+    const bulletText = t.replace(/^[-•]\s*/, "• ");
+    const wrapped = doc.splitTextToSize(bulletText, contentW - 24 - 10);
+    doc.text(wrapped, margin + 10, yT);
+    yT += wrapped.length * 9;
+    continue;
+  }
+
+  // Paragrafo normale
+  const wrapped = doc.splitTextToSize(t, contentW - 24);
+  doc.text(wrapped, margin, yT);
+  yT += wrapped.length * 9;
 }
+  
+  
+ 
+
+
+
+
+
+  // ---- FIRMA IN BASSO A DESTRA ----
+const signRightX = margin + contentW;
+
+doc.setFont("helvetica", "normal");
+doc.setFontSize(9);
+
+const signYTop = pageHeight - 80;   // più in alto rispetto a prima
+const signSpacing = 22;             // spazio verticale tra le due righe
+
+doc.text(
+  "Luogo e Data: ________________________________",
+  signRightX,
+  signYTop,
+  { align: "right" }
+);
+
+doc.text(
+  "Firma Cliente: ________________________________",
+  signRightX,
+  signYTop + signSpacing,
+  { align: "right" }
+);
+
+
+
+
+  // --- Output finale ---
+  if (mode === "print") {
+    openBlobForPrint(doc);
+  } else {
+    doc.save(`DOUBLEU_ordine_${order.club || "Cliente"}_${fmtITDate(order.updatedAtISO)}.pdf`);
+  }
+}
+
 
 function makeProductionPDF(order: Order, mode: PdfMode) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -550,7 +708,6 @@ function makeProductionPDF(order: Order, mode: PdfMode) {
 }
 
 /** -------------------- APP -------------------- */
-
 export default function App() {
   const [order, setOrder] = useState<Order>(() => {
     const saved = safeParse<Order>(localStorage.getItem(LS_CURRENT));
@@ -1026,7 +1183,6 @@ function QtyCell(props: { label: string; value: number; onChange: (v: number) =>
     </div>
   );
 }
-
 function ArchiveMenu(props: {
   archive: Order[];
   onLoad: (idx: number) => void;
@@ -1037,26 +1193,56 @@ function ArchiveMenu(props: {
 
   return (
     <div className="archWrap">
-      <button className="btn" onClick={() => setOpen((v) => !v)}>Archivio</button>
+      <button className="btn" type="button" onClick={() => setOpen((v) => !v)}>
+        Archivio
+      </button>
+
       {open && (
         <div className="archPanel" onMouseLeave={() => setOpen(false)}>
           {archive.length === 0 ? (
-            <div className="archEmpty">Archivio vuoto.</div>
+            <div className="muted">Nessun ordine salvato</div>
           ) : (
-            archive.slice(0, 20).map((o, idx) => (
-              <div className="archRow" key={o.internalId + "_" + idx}>
-                <button className="archBtn" onClick={() => { onLoad(idx); setOpen(false); }}>
-                  <div className="archTitle">
-                    <b>{o.club || "—"}</b> <span className="muted">({o.internalId})</span>
-                  </div>
-                  <div className="archMeta">
-                    Totale {o.items.reduce((a, it) => a + Object.values(it.qty).reduce((x, y) => x + (y || 0), 0), 0)} pz •{" "}
-                    {fmtITDate(o.updatedAtISO)} • <span className={o.status === "CONFERMATO" ? "pill ok miniPill" : "pill warn miniPill"}>{o.status}</span>
-                  </div>
-                </button>
-                <button className="archDel" onClick={() => onDelete(idx)} title="Rimuovi da archivio">✕</button>
-              </div>
-            ))
+            archive.slice(0, 20).map((o, idx) => {
+              const total = (o.items ?? []).reduce((sum: number, it: any) => {
+                const qtyObj = (it as any)?.qty ?? {};
+                const row = Object.values(qtyObj as Record<string, any>).reduce(
+                  (a: number, n: any) => a + (Number(n) || 0),
+                  0
+                );
+                return sum + row;
+              }, 0);
+
+              return (
+                <div className="archRow" key={`${o.internalId}-${idx}`}>
+                  <button
+                    className="archBtn"
+                    type="button"
+                    onClick={() => {
+                      onLoad(idx);
+                      setOpen(false);
+                    }}
+                  >
+                    <div className="archTitle">
+                      <b>{o.club || "-"}</b>{" "}
+                      <span className="muted">{o.internalId}</span>
+                    </div>
+
+                    <div className="archMeta">
+                      Totale <b>{total}</b> {" • "} {fmtITDate(o.updatedAtISO)}
+                    </div>
+                  </button>
+
+                  <button
+                    className="archDel"
+                    type="button"
+                    onClick={() => onDelete(idx)}
+                    aria-label="Elimina"
+                  >
+                    x
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
       )}
