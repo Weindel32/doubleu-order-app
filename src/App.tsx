@@ -2,7 +2,7 @@ import  { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import jsPDF from "jspdf";
 
-type OrderStatus = "BOZZA" | "CONFERMATO";
+type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO";
 
 type SizeChild = "4" | "6" | "8" | "10" | "12" | "14" | "16";
 type SizeAdult = "XS" | "S" | "M" | "L" | "XL" | "XXL";
@@ -39,6 +39,14 @@ type Order = {
   updatedAtISO: string;
 
   club: string;
+  // --- Commerciale interno (non per cliente) ---
+  kitName: string;        // es. "KIT 4 capi"
+  kitUnitPrice: number;   // prezzo kit (es. 90)
+  kitQty: number;         // quantità kit (es. 120)
+  currency: "EUR";
+
+    vatEnabled: boolean; // IVA facoltativa
+  vatRate: number;     // es. 22
 
   client: ClientInfo;
   clientNote: string; // note per cliente (pdf cliente)
@@ -85,10 +93,12 @@ function makeBlankOrder(): Order {
   const now = todayISO();
   return {
     internalId: newInternalId(),
-    status: "BOZZA",
+    status: "PREVENTIVO",
     createdAtISO: now,
     updatedAtISO: now,
+
     club: "",
+
     client: {
       name: "",
       address: "",
@@ -97,6 +107,17 @@ function makeBlankOrder(): Order {
       country: "",
       email: "",
     },
+
+    // --- Commerciale interno ---
+    kitName: "KIT",
+    kitUnitPrice: 0,
+    kitQty: 0,
+    currency: "EUR",
+
+    // IVA facoltativa
+    vatEnabled: false,
+    vatRate: 22,
+
     clientNote: "",
     productionGeneralNote: "",
     items: [],
@@ -116,7 +137,23 @@ function totalPieces(order: Order) {
 function deepClone<T>(x: T): T {
   return JSON.parse(JSON.stringify(x)) as T;
 }
+function round2(n: number) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
 
+function kitSubtotal(order: Order) {
+  return round2((order.kitUnitPrice || 0) * (order.kitQty || 0));
+}
+
+function kitVatAmount(order: Order) {
+  if (!order.vatEnabled) return 0;
+  const rate = (order.vatRate || 0) / 100;
+  return round2(kitSubtotal(order) * rate);
+}
+
+function kitTotal(order: Order) {
+  return round2(kitSubtotal(order) + kitVatAmount(order));
+}
 /** -------------------- PDF HELPERS (senza autotable) -------------------- */
 type PdfMode = "download" | "print";
 
@@ -292,29 +329,23 @@ function makeClientPDF(order: Order, mode: PdfMode) {
 // dopo Club e Data
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.text(
-    `Totale ordine: € 0,00`,
-    margin + contentW - 12,
-    y + 58,
-    { align: "right" }
-  );
-  doc.setFont("helvetica", "normal");
-  // Se NON hai ancora i prezzi, questo sarà 0
- // dopo Club e Data
-const SHOW_TOTAL = true;
+  // --- Totale ordine (da KIT) - opzionale ---
+const hasKitPrice = (order.kitUnitPrice || 0) > 0 && (order.kitQty || 0) > 0;
+const euro = (n: number) => n.toFixed(2).replace(".", ",");
 
-if (SHOW_TOTAL) {
-  // TODO: calcolare il totale quando aggiungerai i prezzi agli articoli
-  const orderTotal = 0;
+if (hasKitPrice) {
+  const subtotal = kitSubtotal(order); // kitUnitPrice * kitQty
+  const total = kitTotal(order);       // + IVA se attiva
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.text(
-    `Totale ordine: € ${orderTotal.toFixed(2)}`,
-    margin + contentW - 12,
-    y + 58,
-    { align: "right" }
-  );
+
+  const label = order.vatEnabled
+    ? `Totale ordine (IVA incl.): € ${euro(total)}`
+    : `Totale ordine: € ${euro(subtotal)}`;
+
+  doc.text(label, margin + contentW - 12, y + 58, { align: "right" });
+
   doc.setFont("helvetica", "normal");
 }
  // --- BLOCCO CLIENTE PROFESSIONALE ---
@@ -432,7 +463,17 @@ y += 22;
 
   // Note cliente + CGV on page 2 if needed
   doc.addPage();
-  pdfHeader(doc, `BOZZA ORDINE • ${fmtITDate(order.updatedAtISO)}`);
+ const statusLabel =
+  order.status === "PREVENTIVO"
+    ? "Preventivo"
+    : order.status === "CONFERMATO"
+    ? "Ordine Confermato"
+    : "Ordine Consegnato";
+
+pdfHeader(
+  doc,
+  `${statusLabel} • ${fmtITDate(order.updatedAtISO)}`
+);
 
   let y2 = 54;
   pdfText(doc, "Note", margin, y2 + 10, 12, true);
@@ -797,8 +838,14 @@ export default function App() {
   }
 
   function confirmOrder() {
-    touch({ status: "CONFERMATO" });
-  }
+  // PREVENTIVO -> CONFERMATO -> CONSEGNATO
+  const next: Record<OrderStatus, OrderStatus> = {
+    PREVENTIVO: "CONFERMATO",
+    CONFERMATO: "CONSEGNATO",
+    CONSEGNATO: "CONSEGNATO",
+  };
+  touch({ status: next[order.status] });
+}
 
   function saveToArchive() {
     const snap = deepClone(order);
@@ -818,7 +865,7 @@ export default function App() {
   function duplicateOrder() {
     const clone = deepClone(order);
     clone.internalId = newInternalId();
-    clone.status = "BOZZA";
+    clone.status = "PREVENTIVO";
     clone.createdAtISO = todayISO();
     clone.updatedAtISO = todayISO();
     // new item ids
@@ -887,7 +934,10 @@ export default function App() {
     color: "Navy",
   });
 
-  const statusClass = order.status === "CONFERMATO" ? "pill ok" : "pill warn";
+  const statusClass =
+  order.status === "CONSEGNATO" ? "pill ok" :
+  order.status === "CONFERMATO" ? "pill ok" :
+  "pill warn";
 
   return (
     <div className="page">
