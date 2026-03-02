@@ -47,7 +47,7 @@ type Order = {
 
     vatEnabled: boolean; // IVA facoltativa
   vatRate: number;     // es. 22
-
+showKitTotalOnClientPdf: boolean;
   client: ClientInfo;
   clientNote: string; // note per cliente (pdf cliente)
   productionGeneralNote: string; // note generali (interne)
@@ -117,7 +117,7 @@ function makeBlankOrder(): Order {
     // IVA facoltativa
     vatEnabled: false,
     vatRate: 22,
-
+showKitTotalOnClientPdf: false,
     clientNote: "",
     productionGeneralNote: "",
     items: [],
@@ -330,25 +330,44 @@ function makeClientPDF(order: Order, mode: PdfMode) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   // --- Totale ordine (da KIT) - opzionale ---
-const hasKitPrice = (order.kitUnitPrice || 0) > 0 && (order.kitQty || 0) > 0;
 const euro = (n: number) => n.toFixed(2).replace(".", ",");
+const hasKitPrice =
+  (order.kitUnitPrice || 0) > 0 &&
+  (order.kitQty || 0) > 0;
 
+console.log("PDF CLIENT", {
+  kitUnitPrice: order.kitUnitPrice,
+  kitQty: order.kitQty,
+  show: order.showKitTotalOnClientPdf,
+  hasKitPrice,
+});
 if (hasKitPrice) {
-  const subtotal = kitSubtotal(order); // kitUnitPrice * kitQty
-  const total = kitTotal(order);       // + IVA se attiva
+  // Totale KIT: lo stampiamo più sotto (sotto "DETTAGLIO ORDINE") per evitare sovrapposizioni
+}
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
+  // NON stampare qui
+  // lo stampiamo più sotto, sotto "DETTAGLIO ORDINE"
 
-  const label = order.vatEnabled
-    ? `Totale ordine (IVA incl.): € ${euro(total)}`
-    : `Totale ordine: € ${euro(subtotal)}`;
 
-  doc.text(label, margin + contentW - 12, y + 58, { align: "right" });
+
+// reset
+doc.setTextColor(0, 0, 0);
+doc.setFont("helvetica", "normal");
 
   doc.setFont("helvetica", "normal");
+
+if (hasKitPrice) {
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.setTextColor(25, 35, 50);
+
+
+
+
+
+  doc.setTextColor(0, 0, 0);
 }
- // --- BLOCCO CLIENTE PROFESSIONALE ---
+  // --- BLOCCO CLIENTE PROFESSIONALE ---
 let clientY = y + 58;
 // calcolo altezza blocco cliente
 let blockHeight = 0;
@@ -357,6 +376,7 @@ if (order.client.name?.trim()) blockHeight += 16;
 if (order.client.address?.trim()) blockHeight += 14;
 if (order.client.cap?.trim() || order.client.city?.trim()) blockHeight += 14;
 if (order.client.country?.trim()) blockHeight += 14;
+if (order.client.email?.trim()) blockHeight += 14;
 
 // disegno sfondo unico (anti-banding)
 doc.setFillColor(243, 244, 246);
@@ -393,6 +413,13 @@ if (order.client.country?.trim()) {
   doc.text(order.client.country.trim(), rightX, clientY, { align: "right" });
   clientY += 14;
 }
+
+if (order.client.email?.trim()) {
+  doc.text(order.client.email.trim(), rightX, clientY, { align: "right" });
+  clientY += 14;
+
+}
+
 y = Math.max(y, clientY) + 20;
 
 
@@ -417,7 +444,25 @@ doc.text("DETTAGLIO ORDINE", margin, y);
 doc.setDrawColor(220, 220, 220);
 doc.setLineWidth(0.5);
 doc.line(margin, y + 6, margin + contentW, y + 6);
+// Totale ordine sotto la linea, a destra
+if (order.showKitTotalOnClientPdf && hasKitPrice) {
+  const subtotal = kitSubtotal(order);
+  const total = kitTotal(order);
+  const euro = (n: number) => n.toFixed(2).replace(".", ",");
 
+  const text = order.vatEnabled
+    ? `Totale ordine (IVA incl.): € ${euro(total)}`
+    : `Totale ordine: € ${euro(subtotal)}`;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.setTextColor(25, 35, 50);
+
+  // y + 18 = sotto la linea (linea è a y+6)
+  doc.text(text, margin + contentW, y + 18, { align: "right" });
+
+  doc.setTextColor(0, 0, 0);
+}
 // Reset
 doc.setFontSize(11);
 doc.setTextColor(0, 0, 0);
@@ -747,13 +792,32 @@ function makeProductionPDF(order: Order, mode: PdfMode) {
   if (mode === "print") openBlobForPrint(doc);
   else doc.save(`DOUBLEU_PRODUZIONE_${order.internalId}_${fmtITDate(order.updatedAtISO).replaceAll("/", "-")}.pdf`);
 }
+function normalizeOrder(o: any): Order {
+  const base = makeBlankOrder();
 
+  return {
+    ...base,
+    ...o,
+    kitUnitPrice: typeof o?.kitUnitPrice === "number" ? o.kitUnitPrice : 0,
+    kitQty: typeof o?.kitQty === "number" ? o.kitQty : 0,
+    vatEnabled: typeof o?.vatEnabled === "boolean" ? o.vatEnabled : false,
+    vatRate: typeof o?.vatRate === "number" ? o.vatRate : 22,
+    showKitTotalOnClientPdf:
+      typeof o?.showKitTotalOnClientPdf === "boolean" ? o.showKitTotalOnClientPdf : false,
+  };
+}
 /** -------------------- APP -------------------- */
 export default function App() {
-  const [order, setOrder] = useState<Order>(() => {
-    const saved = safeParse<Order>(localStorage.getItem(LS_CURRENT));
-    return saved ?? makeBlankOrder();
-  });
+ const [order, setOrder] = useState<Order>(() => {
+  const saved = safeParse<Partial<Order>>(localStorage.getItem(LS_CURRENT));
+  const base = makeBlankOrder();
+  return {
+    ...base,
+    ...(saved ?? {}),
+    // assicurati che il flag esista sempre
+    showKitTotalOnClientPdf: (saved as any)?.showKitTotalOnClientPdf ?? false,
+  } as Order;
+});
 
   const [archive, setArchive] = useState<Order[]>(() => safeParse<Order[]>(localStorage.getItem(LS_ARCHIVE)) ?? []);
 
@@ -1113,7 +1177,102 @@ export default function App() {
             Il PDF Cliente non mostra il numero ordine interno. Il PDF Produzione include SP + DU, note e ordine interno.
           </div>
         </div>
+{/* --- COMMERCIALE INTERNO (KIT) --- */}
+<div className="card">
+  <div className="card-title">Kit (commerciale interno)</div>
 
+  <div className="row" style={{ display: "flex", gap: 20, alignItems: "center" }}>
+
+    <div>
+      <label>Prezzo unitario (€)</label><br />
+      <input
+  type="number"
+  placeholder="—"
+  value={order.kitUnitPrice === 0 ? "" : order.kitUnitPrice}
+  onChange={(e) =>
+    setOrder({
+      ...order,
+      kitUnitPrice: e.target.value === "" ? 0 : Number(e.target.value),
+    })
+  }
+  style={{ width: 120 }}
+/>
+    </div>
+
+    <div>
+      <label>Quantità</label><br />
+      <input
+  type="number"
+  placeholder="—"
+  value={order.kitQty === 0 ? "" : order.kitQty}
+  onChange={(e) =>
+    setOrder({
+      ...order,
+      kitQty: e.target.value === "" ? 0 : Number(e.target.value),
+    })
+  }
+  style={{ width: 120 }}
+/>
+    </div>
+
+    <div>
+      <label>
+        <input
+          type="checkbox"
+          checked={order.vatEnabled}
+          onChange={(e) =>
+            setOrder({ ...order, vatEnabled: e.target.checked })
+          }
+        />
+        {" "}IVA
+      </label>
+    </div>
+
+    {order.vatEnabled && (
+      <div>
+        <label>Aliquota %</label><br />
+        <input
+          type="number"
+          value={order.vatRate ?? 22}
+          onChange={(e) =>
+            setOrder({ ...order, vatRate: Number(e.target.value) || 0 })
+          }
+          style={{ width: 80 }}
+        />
+      </div>
+    )}
+
+    <div
+  style={{
+    marginLeft: "auto",
+    display: "flex",
+    alignItems: "center",
+    gap: 18,
+  }}
+>
+  <label style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+    <input
+      type="checkbox"
+      checked={order.showKitTotalOnClientPdf}
+      onChange={(e) =>
+        setOrder({ ...order, showKitTotalOnClientPdf: e.target.checked })
+      }
+      style={{ margin: 0 }}
+    />
+    <span style={{ fontSize: 13 }}>
+      Mostra nel PDF cliente
+    </span>
+  </label>
+
+  <div style={{ fontWeight: 700 }}>
+    Totale: € {kitTotal(order).toFixed(2)}
+  </div>
+</div>
+<div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+  
+</div>
+  </div>
+</div>
         <div className="card">
           <div className="card-title">Articoli</div>
 
