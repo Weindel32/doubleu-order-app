@@ -2,6 +2,8 @@ import  { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import jsPDF from "jspdf";
 
+const APP_VERSION = "v1.0.0";
+
 type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO";
 
 type SizeChild = "4" | "6" | "8" | "10" | "12" | "14" | "16";
@@ -1356,6 +1358,18 @@ export default function App() {
           <div className="muted">
             Autosalvataggio attivo • Ultimo update: {fmtITDate(order.updatedAtISO)}
           </div>
+          <div
+  style={{
+    position: "fixed",
+    bottom: 8,
+    right: 12,
+    fontSize: 11,
+    opacity: 0.4,
+    fontWeight: 500,
+  }}
+>
+  {APP_VERSION}
+</div>
         </footer>
       </div>
     </div>
