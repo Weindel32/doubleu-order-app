@@ -1019,42 +1019,66 @@ export default function App() {
   order.status === "CONSEGNATO" ? "pill ok" :
   order.status === "CONFERMATO" ? "pill ok" :
   "pill warn";
+ 
   if (!isAuthenticated) {
-    return (
-      <div style={{
-        height: "100vh",
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        flexDirection: "column",
-        fontFamily: "sans-serif"
-      }}>
-        <h2>DOUBLEU Order App</h2>
+        background: "#f5f6f8",
+        fontFamily: "sans-serif",
+      }}
+    >
+      <div
+        style={{
+          background: "white",
+          padding: 40,
+          borderRadius: 12,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.1)",
+          textAlign: "center",
+          width: 320,
+        }}
+      >
+        <h2 style={{ marginBottom: 20 }}>DOUBLEU Order App</h2>
+
         <input
           type="password"
           placeholder="Inserisci password"
           value={passwordInput}
           onChange={(e) => setPasswordInput(e.target.value)}
           style={{
-            padding: 10,
+            padding: 12,
             fontSize: 16,
-            marginBottom: 10,
-            width: 220
+            marginBottom: 16,
+            width: "100%",
+            borderRadius: 6,
+            border: "1px solid #ccc",
           }}
         />
+
         <button
           onClick={handleLogin}
           style={{
-            padding: "10px 20px",
+            padding: "12px 20px",
             fontSize: 16,
-            cursor: "pointer"
+            width: "100%",
+            borderRadius: 6,
+            border: "none",
+            background: "#0f172a",
+            color: "white",
+            cursor: "pointer",
           }}
         >
           Accedi
         </button>
       </div>
-    );
-  }
+    </div>
+  );
+}
   return (
     <div className="page">
       <div className="topbar">
