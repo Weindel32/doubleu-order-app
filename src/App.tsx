@@ -3,6 +3,7 @@ import "./App.css";
 import jsPDF from "jspdf";
 
 const APP_VERSION = "v1.0.0";
+const APP_PASSWORD = "Worder2026";
 
 type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO";
 
@@ -809,9 +810,24 @@ export function normalizeOrder(o: any): Order {
 }
 /** -------------------- APP -------------------- */
 export default function App() {
+    const [isAuthenticated, setIsAuthenticated] = useState(
+    localStorage.getItem("doubleu_auth") === "ok"
+  );
+
+  const [passwordInput, setPasswordInput] = useState("");
+
+  const handleLogin = () => {
+    if (passwordInput === APP_PASSWORD) {
+      localStorage.setItem("doubleu_auth", "ok");
+      setIsAuthenticated(true);
+    } else {
+      alert("Password errata");
+    }
+  };
  const [order, setOrder] = useState<Order>(() => {
   const saved = safeParse<Partial<Order>>(localStorage.getItem(LS_CURRENT));
   const base = makeBlankOrder();
+
   return {
     ...base,
     ...(saved ?? {}),
@@ -1003,7 +1019,42 @@ export default function App() {
   order.status === "CONSEGNATO" ? "pill ok" :
   order.status === "CONFERMATO" ? "pill ok" :
   "pill warn";
-
+  if (!isAuthenticated) {
+    return (
+      <div style={{
+        height: "100vh",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        flexDirection: "column",
+        fontFamily: "sans-serif"
+      }}>
+        <h2>DOUBLEU Order App</h2>
+        <input
+          type="password"
+          placeholder="Inserisci password"
+          value={passwordInput}
+          onChange={(e) => setPasswordInput(e.target.value)}
+          style={{
+            padding: 10,
+            fontSize: 16,
+            marginBottom: 10,
+            width: 220
+          }}
+        />
+        <button
+          onClick={handleLogin}
+          style={{
+            padding: "10px 20px",
+            fontSize: 16,
+            cursor: "pointer"
+          }}
+        >
+          Accedi
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="page">
       <div className="topbar">
