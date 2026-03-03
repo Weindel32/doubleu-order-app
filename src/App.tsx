@@ -330,7 +330,6 @@ function makeClientPDF(order: Order, mode: PdfMode) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   // --- Totale ordine (da KIT) - opzionale ---
-const euro = (n: number) => n.toFixed(2).replace(".", ",");
 const hasKitPrice =
   (order.kitUnitPrice || 0) > 0 &&
   (order.kitQty || 0) > 0;
@@ -792,7 +791,7 @@ function makeProductionPDF(order: Order, mode: PdfMode) {
   if (mode === "print") openBlobForPrint(doc);
   else doc.save(`DOUBLEU_PRODUZIONE_${order.internalId}_${fmtITDate(order.updatedAtISO).replaceAll("/", "-")}.pdf`);
 }
-function normalizeOrder(o: any): Order {
+export function normalizeOrder(o: any): Order {
   const base = makeBlankOrder();
 
   return {
