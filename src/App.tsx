@@ -2,7 +2,7 @@ import  { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import jsPDF from "jspdf";
 
-const APP_VERSION = "v1.0.0";
+const APP_VERSION = "v1.0.1";
 const APP_PASSWORD = "Worder2026";
 
 type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO";
@@ -844,6 +844,9 @@ export default function App() {
 });
 
   const [archive, setArchive] = useState<Order[]>(() => safeParse<Order[]>(localStorage.getItem(LS_ARCHIVE)) ?? []);
+const [payAmount, setPayAmount] = useState("");
+const [payMethod, setPayMethod] = useState("Bonifico");
+const [payNote, setPayNote] = useState("");
 
   // autosave current order
   useEffect(() => {
@@ -949,7 +952,20 @@ export default function App() {
   function deleteFromArchive(idx: number) {
     setArchive((a) => a.filter((_, i) => i !== idx));
   }
+function addPayment(amount: number, method: string, note: string = "") {
+  const newPayment = {
+    date: new Date().toISOString(),
+    amount,
+    method,
+    note
+  };
 
+  setOrder({
+    ...order,
+    payments: [...order.payments, newPayment],
+    updatedAtISO: new Date().toISOString()
+  });
+}
   function duplicateOrder() {
     const clone = deepClone(order);
     clone.internalId = newInternalId();
@@ -1096,6 +1112,7 @@ export default function App() {
               <div className="pill dark">Ordine interno: <b>{order.internalId}</b></div>
               <div className="pill dark">Totale: <b>{total} pz</b></div>
               <div className={statusClass}>Stato: <b>{order.status}</b></div>
+              <div className="pill dark">Archivio: <b>{archive.length}</b></div>
             </div>
           </div>
 
@@ -1200,7 +1217,103 @@ export default function App() {
             </div>
           </div>
         </div>
+{/* --- PAGAMENTI --- */}
+<div className="card">
+  <div className="card-title">Pagamenti</div>
 
+  <div className="grid3">
+    <div className="field">
+      <label>Importo (€)</label>
+      <input
+        type="number"
+        placeholder="0"
+        value={payAmount}
+        onChange={(e) => setPayAmount(e.target.value)}
+      />
+    </div>
+
+    <div className="field">
+      <label>Metodo</label>
+      <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
+        <option value="Bonifico">Bonifico</option>
+        <option value="Contanti">Contanti</option>
+        <option value="Carta">Carta</option>
+        <option value="PayPal">PayPal</option>
+        <option value="Altro">Altro</option>
+      </select>
+    </div>
+
+    <div className="field">
+      <label>Nota</label>
+      <input
+        placeholder="Es. acconto 60% / saldo / riferimento"
+        value={payNote}
+        onChange={(e) => setPayNote(e.target.value)}
+      />
+    </div>
+  </div>
+
+  <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
+    <button
+      className="btn primary"
+      onClick={() => {
+        const n = Number(payAmount);
+        if (!n || n <= 0) return;
+        addPayment(n, payMethod, payNote);
+        setPayAmount("");
+        setPayNote("");
+      }}
+    >
+      Aggiungi pagamento
+    </button>
+
+    <div className="muted">
+      Totale pagato:{" "}
+      <b>
+        {order.payments.reduce((s, p) => s + (typeof p.amount === "number" ? p.amount : 0), 0).toFixed(2)} €
+      </b>
+    </div>
+  </div>
+
+  {order.payments.length > 0 && (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted" style={{ marginBottom: 6 }}>Storico pagamenti</div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {order.payments
+          .slice()
+          .reverse()
+          .map((p, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                padding: "8px 10px",
+                border: "1px solid rgba(0,0,0,0.08)",
+                borderRadius: 10,
+              }}
+            >
+              <div>
+                <b>{p.amount.toFixed(2)} €</b> — {p.method}
+                {p.note ? <span className="muted"> • {p.note}</span> : null}
+              </div>
+              <div className="muted">
+                {new Date(p.date).toLocaleDateString()}
+              </div>
+            </div>
+          ))}
+      </div>
+    </div>
+  )}
+  <div className="muted" style={{ fontWeight: 600 }}>
+Totale ordine: <b>{kitTotal(order).toFixed(2)} €</b>
+</div>
+
+<div className="muted" style={{ fontWeight: 700 }}>
+Residuo da pagare: <b>{(kitTotal(order) - order.payments.reduce((s,p)=>s+p.amount,0)).toFixed(2)} €</b>
+</div>
+</div>
         <div className="card">
           <div className="card-title">Condizioni Generali di Vendita (PDF Cliente)</div>
           <ol className="cgv">
