@@ -34,7 +34,12 @@ type Item = {
   productionNote: string; // nota per articolo (interna)
   qty: Record<SizeKey, number>;
 };
-
+type Payment = {
+  date: string;
+  amount: number;
+  method: string;
+  note?: string;
+};
 type Order = {
   internalId: string; // DU-2026-0001
   status: OrderStatus;
@@ -47,6 +52,7 @@ type Order = {
   kitUnitPrice: number;   // prezzo kit (es. 90)
   kitQty: number;         // quantità kit (es. 120)
   currency: "EUR";
+  payments: Payment[];
 
     vatEnabled: boolean; // IVA facoltativa
   vatRate: number;     // es. 22
@@ -101,6 +107,7 @@ function makeBlankOrder(): Order {
     updatedAtISO: now,
 
     club: "",
+    payments: [],
 
     client: {
       name: "",
