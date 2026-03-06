@@ -2,7 +2,7 @@ import  { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import jsPDF from "jspdf";
 
-const APP_VERSION = "v1.1.1";
+const APP_VERSION = "v1.1.2";
 const APP_PASSWORD = "Worder2026";
 
 type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO";
