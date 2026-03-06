@@ -847,6 +847,67 @@ export default function App() {
 const [payAmount, setPayAmount] = useState("");
 const [payMethod, setPayMethod] = useState("Bonifico");
 const [payNote, setPayNote] = useState("");
+// ===== DASHBOARD VIEW =====
+const [view, setView] = useState<"dashboard" | "order">("dashboard");
+const [dashStatus, setDashStatus] = useState<"TUTTI" | "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO">("TUTTI");
+const [dashQuery, setDashQuery] = useState("");
+
+function orderTotalPieces(o: Order) {
+  // totale pezzi: usa items se presenti, altrimenti kitQty
+  try {
+    return Array.isArray(o.items) && o.items.length
+      ? o.items.reduce((acc, it) => acc + Object.values(it.qty || {}).reduce((a, n) => a + (Number(n) || 0), 0), 0)
+      : (Number((o as any).kitQty) || 0);
+  } catch {
+    return Number((o as any).kitQty) || 0;
+  }
+}
+
+function orderTotalEuro(o: Order) {
+  const base = (Number((o as any).kitUnitPrice) || 0) * (Number((o as any).kitQty) || 0);
+  const vatEnabled = Boolean((o as any).vatEnabled);
+  const vatRate = Number((o as any).vatRate) || 0;
+  return vatEnabled ? base * (1 + vatRate / 100) : base;
+}
+
+function euro(n: number) {
+  try {
+    return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+  } catch {
+    return `€ ${n.toFixed(2)}`;
+  }
+}
+
+function shortDate(iso?: string) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("it-IT");
+}
+
+const archiveCount = archive.length;
+
+const dashRows = archive
+  .filter(o => {
+    const st = (o.status || "PREVENTIVO") as any;
+    if (dashStatus !== "TUTTI" && st !== dashStatus) return false;
+    const q = dashQuery.trim().toLowerCase();
+    if (!q) return true;
+    const club = (o.club || "").toLowerCase();
+    const name = ((o.client && o.client.name) ? o.client.name : "").toLowerCase();
+    const id = (o.internalId || "").toLowerCase();
+    return club.includes(q) || name.includes(q) || id.includes(q);
+  })
+  .sort((a, b) => (b.updatedAtISO || b.createdAtISO || "").localeCompare(a.updatedAtISO || a.createdAtISO || ""))
+  .slice(0, 50);
+
+const kpiPreventivi = archive.filter(o => o.status === "PREVENTIVO").length;
+const kpiConfermati = archive.filter(o => o.status === "CONFERMATO").length;
+const kpiConsegnati = archive.filter(o => o.status === "CONSEGNATO").length;
+
+const kpiConfermatiValue = archive
+  .filter(o => o.status === "CONFERMATO")
+  .reduce((acc, o) => acc + orderTotalEuro(o), 0);
 
   // autosave current order
   useEffect(() => {
@@ -1102,7 +1163,359 @@ function addPayment(amount: number, method: string, note: string = "") {
     </div>
   );
 }
-  return (
+  return view === "dashboard" ? (
+  <div
+    className="dashRoot"
+    style={{
+      minHeight: "100vh",
+      background: "#f5f6f8",
+      display: "grid",
+      gridTemplateColumns: "260px 1fr",
+      fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+    }}
+  >
+    {/* SIDEBAR */}
+    <aside
+      style={{
+        background: "rgba(255,255,255,0.65)",
+        borderRight: "1px solid rgba(0,0,0,0.08)",
+        padding: 18,
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div
+
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 10,
+            background: "linear-gradient(135deg,#3b82f6,#60a5fa)",
+            display: "grid",
+            placeItems: "center",
+            color: "white",
+            fontWeight: 800,
+          }}
+        >
+          D
+        </div>
+        <div style={{ lineHeight: 1.1 }}>
+          <div style={{ fontWeight: 800 }}>DOUBLEU</div>
+          <div style={{ fontSize: 12, opacity: 0.65 }}>Order App</div>
+        </div>
+      </div>
+<button
+  onClick={() => setView("dashboard")}
+  style={{
+    marginTop: 20,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid rgba(0,0,0,0.08)",
+    background: "#eaf2ff",
+    fontWeight: 700,
+    cursor: "pointer",
+    textAlign: "left"
+  }}
+>
+Dashboard
+</button>
+
+<button
+  onClick={() => {
+    setOrder(makeBlankOrder());
+    setView("order");
+  }}
+  style={{
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid rgba(0,0,0,0.08)",
+    background: "white",
+    fontWeight: 700,
+    cursor: "pointer",
+    textAlign: "left"
+  }}
+>
++ Nuovo Ordine
+</button>
+      <button
+        className="btn"
+        onClick={() => setView("dashboard")}
+        style={{
+          justifyContent: "flex-start",
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          padding: "12px 12px",
+          borderRadius: 12,
+          background: "rgba(59,130,246,0.12)",
+          border: "1px solid rgba(59,130,246,0.25)",
+          fontWeight: 700,
+        }}
+      >
+        Dashboard
+      </button>
+
+      <button
+        className="btn"
+        onClick={() => setView("order")}
+        style={{
+          justifyContent: "flex-start",
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          padding: "12px 12px",
+          borderRadius: 12,
+        }}
+      >
+        + Nuovo Ordine
+      </button>
+
+      <div style={{ marginTop: "auto", opacity: 0.7, fontSize: 12 }}>
+        Archivio ordini: <b>{archiveCount}</b>
+      </div>
+    </aside>
+
+    {/* MAIN */}
+    <main style={{ padding: 22 }}>
+      {/* TOP */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 18,
+        }}
+      >
+        <h1 style={{ margin: 0, fontSize: 28, letterSpacing: -0.2 }}>
+          Dashboard
+        </h1>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 12,
+              background: "rgba(255,255,255,0.7)",
+              border: "1px solid rgba(0,0,0,0.08)",
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+            }}
+          >
+            <span style={{ opacity: 0.65 }}>Cerca</span>
+            <input
+              value={dashQuery}
+              onChange={(e) => setDashQuery(e.target.value)}
+              placeholder="Cliente / DU / club"
+              style={{
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                width: 240,
+                fontSize: 14,
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* KPI */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(240px, 1fr))",
+          gap: 16,
+          marginBottom: 18,
+        }}
+      >
+        <div
+          style={{
+            background: "rgba(255,255,255,0.7)",
+            border: "1px solid rgba(0,0,0,0.08)",
+            borderRadius: 16,
+            padding: 18,
+          }}
+        >
+          <div style={{ fontSize: 44, fontWeight: 800 }}>{kpiPreventivi}</div>
+          <div style={{ opacity: 0.7, fontWeight: 700 }}>Preventivi</div>
+          <button
+            className="btn"
+            onClick={() => setDashStatus("TUTTI")}
+            style={{ marginTop: 12, borderRadius: 12 }}
+          >
+            Vedi tutti
+          </button>
+        </div>
+
+        <div
+          style={{
+            background: "linear-gradient(135deg,#3b82f6,#60a5fa)",
+            color: "white",
+            borderRadius: 16,
+            padding: 18,
+            border: "1px solid rgba(0,0,0,0.06)",
+          }}
+        >
+          <div style={{ fontSize: 44, fontWeight: 800 }}>{kpiConfermati}</div>
+          <div style={{ opacity: 0.9, fontWeight: 700 }}>Confermati</div>
+          <div style={{ marginTop: 10, fontSize: 18, fontWeight: 800 }}>
+            {euro(kpiConfermatiValue)}
+          </div>
+        </div>
+
+        <div
+          style={{
+            background: "rgba(34,197,94,0.12)",
+            border: "1px solid rgba(34,197,94,0.25)",
+            borderRadius: 16,
+            padding: 18,
+          }}
+        >
+          <div style={{ fontSize: 44, fontWeight: 800 }}>{kpiConsegnati}</div>
+          <div style={{ opacity: 0.7, fontWeight: 700 }}>Consegnati</div>
+        </div>
+      </div>
+
+      {/* FILTER TABS */}
+      <div
+        style={{
+          background: "rgba(255,255,255,0.7)",
+          border: "1px solid rgba(0,0,0,0.08)",
+          borderRadius: 16,
+          padding: 14,
+          marginBottom: 14,
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+        }}
+      >
+        {(["TUTTI", "PREVENTIVO", "CONFERMATO", "CONSEGNATO"] as const).map(
+          (s) => (
+            <button
+              key={s}
+              className="btn"
+              onClick={() => setDashStatus(s)}
+              style={{
+                borderRadius: 12,
+                fontWeight: 700,
+                background:
+                  dashStatus === s ? "rgba(59,130,246,0.12)" : undefined,
+                border:
+                  dashStatus === s
+                    ? "1px solid rgba(59,130,246,0.25)"
+                    : undefined,
+              }}
+            >
+              {s === "TUTTI"
+                ? "Tutti"
+                : s === "PREVENTIVO"
+                ? "Preventivo"
+                : s === "CONFERMATO"
+                ? "Confermato"
+                : "Consegnato"}
+            </button>
+          )
+        )}
+        <div style={{ marginLeft: "auto", opacity: 0.65, fontSize: 13 }}>
+          Risultati: <b>{dashRows.length}</b>
+        </div>
+      </div>
+
+      {/* TABLE */}
+      <div
+        style={{
+          background: "rgba(255,255,255,0.75)",
+          border: "1px solid rgba(0,0,0,0.08)",
+          borderRadius: 16,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.7fr 0.8fr 60px",
+            gap: 10,
+            padding: "14px 16px",
+            fontWeight: 800,
+            borderBottom: "1px solid rgba(0,0,0,0.08)",
+            opacity: 0.8,
+          }}
+        >
+          <div>Cliente</div>
+          <div>Data</div>
+          <div>Stato</div>
+          <div>Tot Pezzi</div>
+          <div>Totale</div>
+          <div />
+        </div>
+
+        {dashRows.map((o, idx) => (
+          <div
+            key={(o.internalId || "") + idx}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.7fr 0.8fr 60px",
+              gap: 10,
+              padding: "14px 16px",
+              borderBottom: "1px solid rgba(0,0,0,0.06)",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>
+              {(o.club || o.client?.name || "—").toString()}
+              <div style={{ fontSize: 12, opacity: 0.65 }}>
+                {o.internalId || ""}
+              </div>
+            </div>
+
+            <div style={{ opacity: 0.85 }}>
+              {shortDate(o.updatedAtISO || o.createdAtISO)}
+            </div>
+
+            <div>
+              <span
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  fontWeight: 800,
+                  fontSize: 12,
+                  background:
+                    o.status === "CONFERMATO"
+                      ? "rgba(59,130,246,0.14)"
+                      : o.status === "CONSEGNATO"
+                      ? "rgba(34,197,94,0.14)"
+                      : "rgba(0,0,0,0.08)",
+                  border: "1px solid rgba(0,0,0,0.06)",
+                }}
+              >
+                {o.status}
+              </span>
+            </div>
+
+            <div style={{ fontWeight: 800 }}>{orderTotalPieces(o)}</div>
+            <div style={{ fontWeight: 800 }}>{euro(orderTotalEuro(o))}</div>
+
+            <div>
+              <button
+                className="btn"
+                onClick={() => {
+                  // carica ordine dall’archivio e passa alla pagina ordine
+                  loadFromArchive(archive.indexOf(o));
+                  setView("order");
+                }}
+                style={{ borderRadius: 12 }}
+              >
+                ›
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </main>
+  </div>
+) : (
     <div className="page">
       <div className="topbar">
         <div className="topbar-inner">
