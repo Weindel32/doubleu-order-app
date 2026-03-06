@@ -848,7 +848,7 @@ const [payAmount, setPayAmount] = useState("");
 const [payMethod, setPayMethod] = useState("Bonifico");
 const [payNote, setPayNote] = useState("");
 // ===== DASHBOARD VIEW =====
-const [view, setView] = useState<"dashboard" | "order">("dashboard");
+const [view, setView] = useState<"dashboard" | "order" | "orders">("dashboard");
 const [dashStatus, setDashStatus] = useState<"TUTTI" | "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO">("TUTTI");
 const [dashQuery, setDashQuery] = useState("");
 
@@ -1240,6 +1240,21 @@ Dashboard
 + Nuovo Ordine
 </button>
  
+ <button
+  onClick={() => setView("orders")}
+  style={{
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid rgba(0,0,0,0.08)",
+    background: "white",
+    fontWeight: 700,
+    cursor: "pointer",
+    textAlign: "left",
+    marginTop: 6
+  }}
+>
+  Archivio Ordini
+</button>
 
       <div style={{ marginTop: "auto", opacity: 0.7, fontSize: 12 }}>
         Archivio ordini: <b>{archiveCount}</b>
@@ -1481,6 +1496,72 @@ Dashboard
       </div>
     </main>
   </div>
+) : view === "orders" ? (
+  <div style={{ padding: 22 }}>
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+    <h1 style={{ margin: 0, fontSize: 28 }}>Archivio Ordini</h1>
+
+    <button
+      className="btn"
+      onClick={() => setView("dashboard")}
+    >
+      ← Dashboard
+    </button>
+  </div>
+
+  {archive.length === 0 ? (
+    <div className="card" style={{ padding: 20 }}>
+      Nessun ordine presente in archivio.
+    </div>
+  ) : (
+    <div style={{ display: "grid", gap: 12 }}>
+      {archive.map((o, idx) => (
+        <div
+          key={(o.internalId || "") + idx}
+          className="card"
+          style={{
+            padding: 16,
+            border: "1px solid rgba(0,0,0,0.08)",
+            borderRadius: 12,
+            background: "white"
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 18 }}>
+                {o.club || o.client?.name || "Ordine senza nome"}
+              </div>
+              <div style={{ opacity: 0.7, marginTop: 4 }}>
+                {o.internalId} • {o.status}
+              </div>
+            </div>
+
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontWeight: 800 }}>
+                {orderTotalEuro(o).toFixed(2)} €
+              </div>
+              <div style={{ opacity: 0.7, marginTop: 4 }}>
+                {o.updatedAtISO || o.createdAtISO}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              className="btn"
+              onClick={() => {
+                loadFromArchive(idx);
+                setView("order");
+              }}
+            >
+              Apri ordine
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+</div>
 ) : (
     <div className="page">
       <div className="topbar">
