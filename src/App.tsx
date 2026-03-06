@@ -2,7 +2,7 @@ import  { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import jsPDF from "jspdf";
 
-const APP_VERSION = "v1.0.1";
+const APP_VERSION = "v1.1.1";
 const APP_PASSWORD = "Worder2026";
 
 type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO";
@@ -1239,38 +1239,7 @@ Dashboard
 >
 + Nuovo Ordine
 </button>
-      <button
-        className="btn"
-        onClick={() => setView("dashboard")}
-        style={{
-          justifyContent: "flex-start",
-          display: "flex",
-          gap: 10,
-          alignItems: "center",
-          padding: "12px 12px",
-          borderRadius: 12,
-          background: "rgba(59,130,246,0.12)",
-          border: "1px solid rgba(59,130,246,0.25)",
-          fontWeight: 700,
-        }}
-      >
-        Dashboard
-      </button>
-
-      <button
-        className="btn"
-        onClick={() => setView("order")}
-        style={{
-          justifyContent: "flex-start",
-          display: "flex",
-          gap: 10,
-          alignItems: "center",
-          padding: "12px 12px",
-          borderRadius: 12,
-        }}
-      >
-        + Nuovo Ordine
-      </button>
+ 
 
       <div style={{ marginTop: "auto", opacity: 0.7, fontSize: 12 }}>
         Archivio ordini: <b>{archiveCount}</b>
@@ -1397,16 +1366,13 @@ Dashboard
               key={s}
               className="btn"
               onClick={() => setDashStatus(s)}
-              style={{
-                borderRadius: 12,
-                fontWeight: 700,
-                background:
-                  dashStatus === s ? "rgba(59,130,246,0.12)" : undefined,
-                border:
-                  dashStatus === s
-                    ? "1px solid rgba(59,130,246,0.25)"
-                    : undefined,
-              }}
+   style={{
+  borderRadius: 12,
+  fontWeight: 700,
+  color: "#111827",
+  background: dashStatus === s ? "#eaf2ff" : "white",
+  border: dashStatus === s ? "1px solid #93c5fd" : "1px solid #e5e7eb",
+}}
             >
               {s === "TUTTI"
                 ? "Tutti"
@@ -1530,6 +1496,9 @@ Dashboard
           </div>
 
           <div className="actions">
+            <button className="btn" onClick={() => setView("dashboard")}>
+  ← Dashboard
+</button>
             <button className="btn primary" onClick={confirmOrder}>Conferma ordine</button>
             <button className="btn" onClick={saveToArchive}>Salva</button>
             <ArchiveMenu
