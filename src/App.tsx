@@ -2,10 +2,10 @@ import  { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import jsPDF from "jspdf";
 
-const APP_VERSION = "v1.1.2";
+const APP_VERSION = "v1.1.3";
 const APP_PASSWORD = "Worder2026";
 
-type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO";
+type OrderStatus = "PREVENTIVO" | "CONFERMATO" | "CONSEGNA PARZIALE" | "CONSEGNATO";
 
 type SizeChild = "4" | "6" | "8" | "10" | "12" | "14" | "16";
 type SizeAdult = "XS" | "S" | "M" | "L" | "XL" | "XXL";
@@ -40,6 +40,11 @@ type Payment = {
   method: string;
   note?: string;
 };
+type CommercialRow = {
+  description: string;
+  price: number;
+  qty: number;
+};
 type Order = {
   internalId: string; // DU-2026-0001
   status: OrderStatus;
@@ -53,6 +58,7 @@ type Order = {
   kitQty: number;         // quantità kit (es. 120)
   currency: "EUR";
   payments: Payment[];
+  commercialRows: CommercialRow[];
 
     vatEnabled: boolean; // IVA facoltativa
   vatRate: number;     // es. 22
@@ -108,7 +114,7 @@ function makeBlankOrder(): Order {
 
     club: "",
     payments: [],
-
+    commercialRows: [],
     client: {
       name: "",
       address: "",
@@ -517,11 +523,13 @@ y += 22;
 
   // Note cliente + CGV on page 2 if needed
   doc.addPage();
- const statusLabel =
+const statusLabel =
   order.status === "PREVENTIVO"
     ? "Preventivo"
     : order.status === "CONFERMATO"
     ? "Ordine Confermato"
+    : order.status === "CONSEGNA PARZIALE"
+    ? "Consegna Parziale"
     : "Ordine Consegnato";
 
 pdfHeader(
@@ -847,6 +855,15 @@ export default function App() {
 const [payAmount, setPayAmount] = useState("");
 const [payMethod, setPayMethod] = useState("Bonifico");
 const [payNote, setPayNote] = useState("");
+function deleteOrder(id: string) {
+  if (!window.confirm("Vuoi eliminare questo ordine?")) return;
+
+  const updated = archive.filter(o => o.internalId !== id);
+
+  setArchive(updated);
+
+  localStorage.setItem("LS_ARCHIVE", JSON.stringify(updated));
+}
 // ===== DASHBOARD VIEW =====
 const [view, setView] = useState<"dashboard" | "order" | "orders">("dashboard");
 const [dashStatus, setDashStatus] = useState<"TUTTI" | "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO">("TUTTI");
@@ -905,9 +922,7 @@ const kpiPreventivi = archive.filter(o => o.status === "PREVENTIVO").length;
 const kpiConfermati = archive.filter(o => o.status === "CONFERMATO").length;
 const kpiConsegnati = archive.filter(o => o.status === "CONSEGNATO").length;
 
-const kpiConfermatiValue = archive
-  .filter(o => o.status === "CONFERMATO")
-  .reduce((acc, o) => acc + orderTotalEuro(o), 0);
+
 
   // autosave current order
   useEffect(() => {
@@ -991,11 +1006,12 @@ const kpiConfermatiValue = archive
 
   function confirmOrder() {
   // PREVENTIVO -> CONFERMATO -> CONSEGNATO
-  const next: Record<OrderStatus, OrderStatus> = {
-    PREVENTIVO: "CONFERMATO",
-    CONFERMATO: "CONSEGNATO",
-    CONSEGNATO: "CONSEGNATO",
-  };
+const next: Record<OrderStatus, OrderStatus> = {
+  PREVENTIVO: "CONFERMATO",
+  CONFERMATO: "CONSEGNA PARZIALE",
+  "CONSEGNA PARZIALE": "CONSEGNATO",
+  CONSEGNATO: "CONSEGNATO",
+};
   touch({ status: next[order.status] });
 }
 
@@ -1023,6 +1039,42 @@ const kpiConfermatiValue = archive
   function deleteFromArchive(idx: number) {
     setArchive((a) => a.filter((_, i) => i !== idx));
   }
+function addCommercialRow() {
+  setOrder((prev) => ({
+    ...prev,
+    commercialRows: [
+      ...(prev.commercialRows || []),
+      { description: "", price: 0, qty: 0 }
+    ],
+    updatedAtISO: new Date().toISOString()
+  }));
+}
+
+function updateCommercialRow(idx: number, patch: Partial<CommercialRow>) {
+  setOrder((prev) => {
+    const next = [...(prev.commercialRows || [])];
+    next[idx] = { ...next[idx], ...patch };
+
+    return {
+      ...prev,
+      commercialRows: next,
+      updatedAtISO: new Date().toISOString()
+    };
+  });
+}
+
+function removeCommercialRow(idx: number) {
+  setOrder((prev) => ({
+    ...prev,
+    commercialRows: (prev.commercialRows || []).filter((_, i) => i !== idx),
+    updatedAtISO: new Date().toISOString()
+  }));
+}
+const commercialTotal = (order.commercialRows || []).reduce(
+  (acc, row) => acc + (Number(row.price) || 0) * (Number(row.qty) || 0),
+  0
+);
+
 function addPayment(amount: number, method: string, note: string = "") {
   const newPayment = {
     date: new Date().toISOString(),
@@ -1355,7 +1407,19 @@ Dashboard
           <div style={{ fontSize: 44, fontWeight: 800 }}>{kpiConfermati}</div>
           <div style={{ opacity: 0.9, fontWeight: 700 }}>Confermati</div>
           <div style={{ marginTop: 10, fontSize: 18, fontWeight: 800 }}>
-            {euro(kpiConfermatiValue)}
+            {euro(
+  archive
+    .filter((o) => o.status === "CONFERMATO")
+    .reduce(
+      (sum, o) =>
+        sum +
+        (o.commercialRows || []).reduce(
+          (rSum, r) => rSum + (Number(r.price) || 0) * (Number(r.qty) || 0),
+          0
+        ),
+      0
+    )
+)}
           </div>
         </div>
 
@@ -1496,7 +1560,7 @@ Dashboard
             </div>
 
             <div style={{ fontWeight: 800 }}>{orderTotalPieces(o)}</div>
-            <div style={{ fontWeight: 800 }}>{euro(orderTotalEuro(o))}</div>
+            <div style={{ fontWeight: 800 }}>{euro((o.commercialRows || []).reduce((s, r) => s + (Number(r.price) || 0) * (Number(r.qty) || 0), 0))}</div>
 
             <div>
               <button
@@ -1510,6 +1574,22 @@ Dashboard
               >
                 ›
               </button>
+              <button
+  className="btn"
+  onClick={() => {
+    const copy = structuredClone(o);
+    copy.internalId = newInternalId();
+    copy.status = "PREVENTIVO";
+    copy.createdAtISO = todayISO();
+    copy.updatedAtISO = todayISO();
+    copy.payments = [];
+    setOrder(copy);
+    setView("order");
+  }}
+  style={{ borderRadius: 12, background: "#2563eb", color: "white", marginLeft: 6 }}
+>
+  Riordina
+</button>
             </div>
           </div>
         ))}
@@ -1518,77 +1598,170 @@ Dashboard
   </div>
 ) : view === "orders" ? (
   <div style={{ padding: 22 }}>
-  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-    <h1 style={{ margin: 0, fontSize: 28 }}>Archivio Ordini</h1>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 16
+      }}
+    >
+      <h1 style={{ margin: 0, fontSize: 28 }}>Archivio Ordini</h1>
 
-   <button
-  onClick={() => setView("dashboard")}
-  style={{
-    padding: "10px 14px",
-    borderRadius: 10,
-    border: "1px solid #d1d5db",
-    background: "white",
-    fontWeight: 600,
-    cursor: "pointer"
-  }}
->
-  ← Dashboard
-</button>
-  </div>
-
-  {archive.length === 0 ? (
-    <div className="card" style={{ padding: 20 }}>
-      Nessun ordine presente in archivio.
+      <button
+        onClick={() => setView("dashboard")}
+        style={{
+          padding: "10px 14px",
+          borderRadius: 10,
+          border: "1px solid #d1d5db",
+          background: "white",
+          fontWeight: 600,
+          cursor: "pointer"
+        }}
+      >
+        ← Dashboard
+      </button>
     </div>
-  ) : (
-    <div style={{ display: "grid", gap: 12 }}>
-      {archive.map((o, idx) => (
-        <div
-          key={(o.internalId || "") + idx}
-          className="card"
-          style={{
-            padding: 16,
-            border: "1px solid rgba(0,0,0,0.08)",
-            borderRadius: 12,
-            background: "white"
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 18 }}>
-                {o.club || o.client?.name || "Ordine senza nome"}
-              </div>
-              <div style={{ opacity: 0.7, marginTop: 4 }}>
-                {o.internalId} • {o.status}
-              </div>
-            </div>
 
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontWeight: 800 }}>
-                {orderTotalEuro(o).toFixed(2)} €
-              </div>
-              <div style={{ opacity: 0.7, marginTop: 4 }}>
-                {o.updatedAtISO || o.createdAtISO}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+    {archive.length === 0 ? (
+      <div
+        className="card"
+        style={{
+          padding: 20,
+          border: "1px solid rgba(0,0,0,0.08)",
+          borderRadius: 12,
+          background: "white"
+        }}
+      >
+        Nessun ordine presente in archivio.
+      </div>
+    ) : (
+      <div style={{ display: "grid", gap: 12 }}>
+        {archive.map((o, idx) => (
+          <div
+            key={`${o.internalId || ""}-${idx}`}
+            className="card"
+            style={{
+              position: "relative",
+              padding: 16,
+              border: "1px solid rgba(0,0,0,0.08)",
+              borderRadius: 12,
+              background: "white"
+            }}
+          >
             <button
-              className="btn"
-              onClick={() => {
-                loadFromArchive(idx);
-                setView("order");
+              title="Elimina ordine"
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteOrder(o.internalId);
+              }}
+              style={{
+                position: "absolute",
+                right: 16,
+                bottom: 16,
+                width: 36,
+                height: 36,
+                borderRadius: 8,
+                border: "1px solid #e5e7eb",
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 18,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
               }}
             >
-              Apri ordine
+              🗑
             </button>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: 16
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 18 }}>
+                  {o.club || o.client?.name || "Ordine senza nome"}
+                </div>
+                <div style={{ opacity: 0.7, marginTop: 4 }}>
+                  {o.internalId} • {o.status}
+                </div>
+              </div>
+
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 800 }}>
+                  {orderTotalEuro(o).toFixed(2)} €
+                </div>
+                <div style={{ opacity: 0.7, marginTop: 4 }}>
+                  {new Date(o.updatedAtISO || o.createdAtISO).toLocaleDateString("it-IT", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric"
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 10
+              }}
+            >
+              <button
+                onClick={() => {
+                  loadFromArchive(idx);
+                  setView("order");
+                }}
+                style={{
+                  background: "white",
+                  color: "#111827",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 10,
+                  padding: "10px 16px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 14
+                }}
+              >
+                Apri ordine
+              </button>
+
+              <button
+                onClick={() => {
+                  const copy = structuredClone(o);
+                  copy.internalId = newInternalId();
+                  copy.status = "PREVENTIVO";
+                  copy.createdAtISO = todayISO();
+                  copy.updatedAtISO = todayISO();
+                  copy.payments = [];
+                  setOrder(copy);
+                  setView("order");
+                }}
+                style={{
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "10px 16px",
+                  background: "#2563eb",
+                  color: "white",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: 14
+                }}
+              >
+                Riordina
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
-  )}
-</div>
+        ))}
+      </div>
+    )}
+  </div>
 ) : (
     <div className="page">
       <div className="topbar">
@@ -1707,6 +1880,106 @@ Dashboard
             </div>
           </div>
         </div>
+<div className="card">
+  <div className="card-title">Righe commerciali (interne)</div>
+
+  <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+    {(order.commercialRows || []).length === 0 && (
+      <div style={{ opacity: 0.65 }}>
+        Nessuna riga commerciale inserita.
+      </div>
+    )}
+
+    {(order.commercialRows || []).map((row, idx) => (
+      <div
+        key={idx}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "2fr 110px 90px 120px 44px",
+          gap: 10,
+          alignItems: "center"
+        }}
+      >
+        <input
+          placeholder="Descrizione"
+          value={row.description}
+          onChange={(e) =>
+            updateCommercialRow(idx, { description: e.target.value })
+          }
+        />
+
+        <input
+          type="number"
+          placeholder="Prezzo"
+          value={row.price === 0 ? "" : row.price}
+          onChange={(e) =>
+            updateCommercialRow(idx, {
+              price: e.target.value === "" ? 0 : Number(e.target.value)
+            })
+          }
+        />
+
+        <input
+          type="number"
+          placeholder="Qta"
+          value={row.qty === 0 ? "" : row.qty}
+          onChange={(e) =>
+            updateCommercialRow(idx, {
+              qty: e.target.value === "" ? 0 : Number(e.target.value)
+            })
+          }
+        />
+
+        <div style={{ fontWeight: 700 }}>
+          {((Number(row.price) || 0) * (Number(row.qty) || 0)).toFixed(2)} €
+        </div>
+
+        <button
+          type="button"
+          onClick={() => removeCommercialRow(idx)}
+          style={{
+            height: 40,
+            borderRadius: 10,
+            border: "1px solid #d1d5db",
+            background: "white",
+            cursor: "pointer",
+            fontWeight: 700
+          }}
+        >
+          ×
+        </button>
+      </div>
+    ))}
+
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginTop: 8
+      }}
+    >
+      <button
+        type="button"
+        onClick={addCommercialRow}
+        style={{
+          padding: "10px 14px",
+          borderRadius: 10,
+          border: "1px solid #d1d5db",
+          background: "white",
+          fontWeight: 700,
+          cursor: "pointer"
+        }}
+      >
+        + Aggiungi riga
+      </button>
+
+      <div style={{ fontWeight: 800, fontSize: 18 }}>
+        Totale commerciale: {commercialTotal.toFixed(2)} €
+      </div>
+    </div>
+  </div>
+</div>
 {/* --- PAGAMENTI --- */}
 <div className="card">
   <div className="card-title">Pagamenti</div>
@@ -1760,7 +2033,7 @@ Dashboard
     <div className="muted">
       Totale pagato:{" "}
       <b>
-        {order.payments.reduce((s, p) => s + (typeof p.amount === "number" ? p.amount : 0), 0).toFixed(2)} €
+      {order.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0).toFixed(2)} €
       </b>
     </div>
   </div>
@@ -1797,11 +2070,11 @@ Dashboard
     </div>
   )}
   <div className="muted" style={{ fontWeight: 600 }}>
-Totale ordine: <b>{kitTotal(order).toFixed(2)} €</b>
+Totale ordine: <b>{commercialTotal.toFixed(2)} €</b>
 </div>
 
 <div className="muted" style={{ fontWeight: 700 }}>
-Residuo da pagare: <b>{(kitTotal(order) - order.payments.reduce((s,p)=>s+p.amount,0)).toFixed(2)} €</b>
+Residuo da pagare: <b>{(commercialTotal - order.payments.reduce((s,p)=>s+(Number(p.amount)||0),0)).toFixed(2)} €</b>
 </div>
 </div>
         <div className="card">
@@ -1863,102 +2136,7 @@ Residuo da pagare: <b>{(kitTotal(order) - order.payments.reduce((s,p)=>s+p.amoun
             Il PDF Cliente non mostra il numero ordine interno. Il PDF Produzione include SP + DU, note e ordine interno.
           </div>
         </div>
-{/* --- COMMERCIALE INTERNO (KIT) --- */}
-<div className="card">
-  <div className="card-title">Kit (commerciale interno)</div>
 
-  <div className="row" style={{ display: "flex", gap: 20, alignItems: "center" }}>
-
-    <div>
-      <label>Prezzo unitario (€)</label><br />
-      <input
-  type="number"
-  placeholder="—"
-  value={order.kitUnitPrice === 0 ? "" : order.kitUnitPrice}
-  onChange={(e) =>
-    setOrder({
-      ...order,
-      kitUnitPrice: e.target.value === "" ? 0 : Number(e.target.value),
-    })
-  }
-  style={{ width: 120 }}
-/>
-    </div>
-
-    <div>
-      <label>Quantità</label><br />
-      <input
-  type="number"
-  placeholder="—"
-  value={order.kitQty === 0 ? "" : order.kitQty}
-  onChange={(e) =>
-    setOrder({
-      ...order,
-      kitQty: e.target.value === "" ? 0 : Number(e.target.value),
-    })
-  }
-  style={{ width: 120 }}
-/>
-    </div>
-
-    <div>
-      <label>
-        <input
-          type="checkbox"
-          checked={order.vatEnabled}
-          onChange={(e) =>
-            setOrder({ ...order, vatEnabled: e.target.checked })
-          }
-        />
-        {" "}IVA
-      </label>
-    </div>
-
-    {order.vatEnabled && (
-      <div>
-        <label>Aliquota %</label><br />
-        <input
-          type="number"
-          value={order.vatRate ?? 22}
-          onChange={(e) =>
-            setOrder({ ...order, vatRate: Number(e.target.value) || 0 })
-          }
-          style={{ width: 80 }}
-        />
-      </div>
-    )}
-
-    <div
-  style={{
-    marginLeft: "auto",
-    display: "flex",
-    alignItems: "center",
-    gap: 18,
-  }}
->
-  <label style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
-    <input
-      type="checkbox"
-      checked={order.showKitTotalOnClientPdf}
-      onChange={(e) =>
-        setOrder({ ...order, showKitTotalOnClientPdf: e.target.checked })
-      }
-      style={{ margin: 0 }}
-    />
-    <span style={{ fontSize: 13 }}>
-      Mostra nel PDF cliente
-    </span>
-  </label>
-
-  <div style={{ fontWeight: 700 }}>
-    Totale: € {kitTotal(order).toFixed(2)}
-  </div>
-</div>
-<div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
-  
-</div>
-  </div>
-</div>
         <div className="card">
           <div className="card-title">Articoli</div>
 
