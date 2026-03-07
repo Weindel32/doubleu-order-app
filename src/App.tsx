@@ -1004,11 +1004,21 @@ const kpiConfermatiValue = archive
     setArchive((a) => [snap, ...a].slice(0, 200));
   }
 
-  function loadFromArchive(idx: number) {
-    const chosen = archive[idx];
-    if (!chosen) return;
-    setOrder(deepClone(chosen));
-  }
+ function loadFromArchive(idx: number) {
+  const chosen = archive[idx];
+  if (!chosen) return;
+
+  const base = makeBlankOrder();
+
+  setOrder({
+    ...base,
+    ...deepClone(chosen),
+    payments: Array.isArray(chosen.payments) ? chosen.payments : [],
+  });
+
+  setView("order");
+}
+  
 
   function deleteFromArchive(idx: number) {
     setArchive((a) => a.filter((_, i) => i !== idx));
@@ -1433,17 +1443,27 @@ Dashboard
         </div>
 
         {dashRows.map((o, idx) => (
-          <div
-            key={(o.internalId || "") + idx}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.7fr 0.8fr 60px",
-              gap: 10,
-              padding: "14px 16px",
-              borderBottom: "1px solid rgba(0,0,0,0.06)",
-              alignItems: "center",
-            }}
-          >
+  <div
+    key={(o.internalId || "") + idx}
+    onClick={() => {
+  const archiveIdx = archive.findIndex(
+    (a) => (a.internalId || "") === (o.internalId || "")
+  );
+  if (archiveIdx >= 0) {
+    loadFromArchive(archiveIdx);
+    setView("order");
+  }
+}}
+    style={{
+      display: "grid",
+      cursor: "pointer",
+      gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.7fr 0.8fr",
+      gap: 10,
+      padding: "14px 16px",
+      borderBottom: "1px solid rgba(0,0,0,0.06)",
+      alignItems: "center",
+    }}
+  >
             <div style={{ fontWeight: 800 }}>
               {(o.club || o.client?.name || "—").toString()}
               <div style={{ fontSize: 12, opacity: 0.65 }}>
@@ -1501,12 +1521,19 @@ Dashboard
   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
     <h1 style={{ margin: 0, fontSize: 28 }}>Archivio Ordini</h1>
 
-    <button
-      className="btn"
-      onClick={() => setView("dashboard")}
-    >
-      ← Dashboard
-    </button>
+   <button
+  onClick={() => setView("dashboard")}
+  style={{
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid #d1d5db",
+    background: "white",
+    fontWeight: 600,
+    cursor: "pointer"
+  }}
+>
+  ← Dashboard
+</button>
   </div>
 
   {archive.length === 0 ? (
