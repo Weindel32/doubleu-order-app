@@ -1488,22 +1488,22 @@ Dashboard
         }}
       >
         <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.7fr 0.8fr 60px",
-            gap: 10,
-            padding: "14px 16px",
-            fontWeight: 800,
-            borderBottom: "1px solid rgba(0,0,0,0.08)",
-            opacity: 0.8,
-          }}
+style={{
+  display: "grid",
+  gridTemplateColumns: "2fr 1fr 1fr 0.8fr 1fr",
+  gap: 10,
+  padding: "14px 16px",
+  fontWeight: 800,
+  borderBottom: "1px solid rgba(0,0,0,0.08)",
+  alignItems: "center",
+  opacity: 0.8,
+}}
         >
-          <div>Cliente</div>
-          <div>Data</div>
-          <div>Stato</div>
-          <div>Tot Pezzi</div>
-          <div>Totale</div>
-          <div />
+<div>Cliente</div>
+<div>Data</div>
+<div>Stato</div>
+<div>Tot Pezzi</div>
+<div>Totale</div>
         </div>
 
         {dashRows.map((o, idx) => (
@@ -1521,7 +1521,7 @@ Dashboard
     style={{
       display: "grid",
       cursor: "pointer",
-      gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.7fr 0.8fr",
+      gridTemplateColumns: "2fr 1fr 1fr 0.8fr 1fr",
       gap: 10,
       padding: "14px 16px",
       borderBottom: "1px solid rgba(0,0,0,0.06)",
@@ -1536,7 +1536,7 @@ Dashboard
             </div>
 
             <div style={{ opacity: 0.85 }}>
-              {shortDate(o.updatedAtISO || o.createdAtISO)}
+              {shortDate(o.createdAtISO || o.updatedAtISO)}
             </div>
 
             <div>
@@ -1696,11 +1696,11 @@ Dashboard
                   {orderTotalEuro(o).toFixed(2)} €
                 </div>
                 <div style={{ opacity: 0.7, marginTop: 4 }}>
-                  {new Date(o.updatedAtISO || o.createdAtISO).toLocaleDateString("it-IT", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric"
-                  })}
+            {new Date(o.createdAtISO || o.updatedAtISO).toLocaleDateString("it-IT", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric"
+})}
                 </div>
               </div>
             </div>
@@ -1852,6 +1852,20 @@ Dashboard
                 <input value={order.client.email} onChange={(e) => updateClient({ email: e.target.value })} placeholder="nome@email.com" />
               </div>
             </div>
+<div className="field">
+  <label>Data ordine</label>
+  <input
+    type="date"
+    value={order.createdAtISO ? order.createdAtISO.slice(0, 10) : ""}
+    onChange={(e) =>
+      setOrder({
+        ...order,
+        createdAtISO: new Date(e.target.value).toISOString()
+      })
+    }
+    style={{ width: "180px" }}
+  />
+</div>
             <div className="hint">Se lasci vuoti questi campi, non compariranno nel PDF Cliente.</div>
           </div>
 
@@ -2313,7 +2327,7 @@ function ArchiveMenu(props: {
                     </div>
 
                     <div className="archMeta">
-                      Totale <b>{total}</b> {" • "} {fmtITDate(o.updatedAtISO)}
+                      Totale <b>{total}</b> {" • "} {fmtITDate(o.createdAtISO || o.updatedAtISO)}
                     </div>
                   </button>
 
