@@ -169,11 +169,27 @@ body{
 
 .grid3{
   display:grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: end;
 }
-@media (max-width: 980px){
+
+@media (max-width: 1200px){
   .grid3{ grid-template-columns: 1fr; }
+}
+.field input[type="date"]{
+  max-width: 180px;
+}
+
+.field select{
+  max-width: 200px;
+}
+
+.grid3 input,
+.grid3 select{
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .field label{
