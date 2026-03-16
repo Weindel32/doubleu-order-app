@@ -881,9 +881,21 @@ function orderTotalPieces(o: Order) {
 }
 
 function orderTotalEuro(o: Order) {
-  const base = (Number((o as any).kitUnitPrice) || 0) * (Number((o as any).kitQty) || 0);
+  const rows = (o as any).commercialRows || [];
+
+  const base = rows.reduce((sum: number, r: any) => {
+    const price = Number(r.price) || 0;
+    const qty =
+      Number(r.qty) ||
+      Number(r.totalQty) ||
+      0;
+
+    return sum + price * qty;
+  }, 0);
+
   const vatEnabled = Boolean((o as any).vatEnabled);
   const vatRate = Number((o as any).vatRate) || 0;
+
   return vatEnabled ? base * (1 + vatRate / 100) : base;
 }
 
@@ -1015,10 +1027,13 @@ const next: Record<OrderStatus, OrderStatus> = {
   touch({ status: next[order.status] });
 }
 
-  function saveToArchive() {
-    const snap = deepClone(order);
-    setArchive((a) => [snap, ...a].slice(0, 200));
-  }
+ function saveToArchive() {
+  const snap = deepClone(order);
+  setArchive((prev) => {
+    const filtered = prev.filter((o) => o.internalId !== snap.internalId);
+    return [snap, ...filtered].slice(0, 200);
+  });
+}
 
  function loadFromArchive(idx: number) {
   const chosen = archive[idx];
