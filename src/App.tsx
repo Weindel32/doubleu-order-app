@@ -852,6 +852,10 @@ export default function App() {
 });
 
   const [archive, setArchive] = useState<Order[]>(() => safeParse<Order[]>(localStorage.getItem(LS_ARCHIVE)) ?? []);
+  const kpiConfirmedOrders = confirmedOrdersCount(archive);
+const kpiConfirmedRevenue = confirmedRevenue(archive);
+const kpiConfirmedPieces = confirmedPieces(archive);
+const kpiConfirmedAverage = confirmedAverageOrder(archive);
 const [payAmount, setPayAmount] = useState("");
 const [payMethod, setPayMethod] = useState("Bonifico");
 const [payNote, setPayNote] = useState("");
@@ -899,6 +903,27 @@ function orderTotalEuro(o: Order) {
   return vatEnabled ? base * (1 + vatRate / 100) : base;
 }
 
+function confirmedOrdersList(archive: Order[]) {
+  return archive.filter((o) => o.status === "CONFERMATO");
+}
+
+function confirmedOrdersCount(archive: Order[]) {
+  return confirmedOrdersList(archive).length;
+}
+
+function confirmedRevenue(archive: Order[]) {
+  return confirmedOrdersList(archive).reduce((sum, o) => sum + orderTotalEuro(o), 0);
+}
+
+function confirmedPieces(archive: Order[]) {
+  return confirmedOrdersList(archive).reduce((sum, o) => sum + orderTotalPieces(o), 0);
+}
+
+function confirmedAverageOrder(archive: Order[]) {
+  const count = confirmedOrdersCount(archive);
+  if (!count) return 0;
+  return confirmedRevenue(archive) / count;
+}
 function euro(n: number) {
   try {
     return n.toLocaleString("it-IT", { style: "currency", currency: "EUR" });
@@ -1450,7 +1475,43 @@ Dashboard
           <div style={{ opacity: 0.7, fontWeight: 700 }}>Consegnati</div>
         </div>
       </div>
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 12,
+    marginTop: 14,
+    marginBottom: 18,
+  }}
+>
+  <div className="card" style={{ padding: 16 }}>
+    <div style={{ fontSize: 12, opacity: 0.7 }}>Ordini confermati</div>
+    <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>
+      {kpiConfirmedOrders}
+    </div>
+  </div>
 
+  <div className="card" style={{ padding: 16 }}>
+    <div style={{ fontSize: 12, opacity: 0.7 }}>Fatturato confermato</div>
+    <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>
+      {euro(kpiConfirmedRevenue)}
+    </div>
+  </div>
+
+  <div className="card" style={{ padding: 16 }}>
+    <div style={{ fontSize: 12, opacity: 0.7 }}>Pezzi confermati</div>
+    <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>
+      {kpiConfirmedPieces}
+    </div>
+  </div>
+
+  <div className="card" style={{ padding: 16 }}>
+    <div style={{ fontSize: 12, opacity: 0.7 }}>Valore medio ordine</div>
+    <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>
+      {euro(kpiConfirmedAverage)}
+    </div>
+  </div>
+</div>
       {/* FILTER TABS */}
       <div
         style={{
