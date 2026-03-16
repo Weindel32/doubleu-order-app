@@ -869,7 +869,7 @@ function deleteOrder(id: string) {
   localStorage.setItem("LS_ARCHIVE", JSON.stringify(updated));
 }
 // ===== DASHBOARD VIEW =====
-const [view, setView] = useState<"dashboard" | "order" | "orders">("dashboard");
+const [view, setView] = useState<"dashboard" | "order" | "orders" | "clienti">("dashboard");
 const [dashStatus, setDashStatus] = useState<"TUTTI" | "PREVENTIVO" | "CONFERMATO" | "CONSEGNATO">("TUTTI");
 const [dashQuery, setDashQuery] = useState("");
 
@@ -907,18 +907,46 @@ function confirmedOrdersList(archive: Order[]) {
   return archive.filter((o) => o.status === "CONFERMATO");
 }
 
+function realOrdersList(archive: Order[]) {
+  return archive.filter(
+    (o) =>
+      o.status === "CONFERMATO" ||
+      o.status === "CONSEGNATO" ||
+      o.status === "CONSEGNA PARZIALE"
+  );
+}
+
 function confirmedOrdersCount(archive: Order[]) {
   return confirmedOrdersList(archive).length;
 }
 
 function confirmedRevenue(archive: Order[]) {
-  return confirmedOrdersList(archive).reduce((sum, o) => sum + orderTotalEuro(o), 0);
+  return realOrdersList(archive).reduce((sum, o) => sum + orderTotalEuro(o), 0);
 }
 
 function confirmedPieces(archive: Order[]) {
-  return confirmedOrdersList(archive).reduce((sum, o) => sum + orderTotalPieces(o), 0);
+  return realOrdersList(archive).reduce((sum, o) => sum + orderTotalPieces(o), 0);
 }
+function topClubByRevenue(archive: Order[]) {
+  const revenue: Record<string, number> = {};
 
+  realOrdersList(archive).forEach((o) => {
+const club = String(o.club || o.client?.name || "Sconosciuto").trim();
+const total = orderTotalEuro(o);
+
+if (!revenue[club]) revenue[club] = 0;
+revenue[club] += total;
+  });
+
+  const sorted = Object.entries(revenue).sort((a, b) => b[1] - a[1]);
+
+  if (!sorted.length) return null;
+
+  return {
+    club: sorted[0][0],
+    value: sorted[0][1],
+  };
+}
 function confirmedAverageOrder(archive: Order[]) {
   const count = confirmedOrdersCount(archive);
   if (!count) return 0;
@@ -1357,7 +1385,21 @@ Dashboard
 >
   Archivio Ordini
 </button>
-
+<button
+  onClick={() => setView("clienti")}
+  style={{
+    marginTop: 12,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid rgba(0,0,0,0.08)",
+    background: "white",
+    fontWeight: 700,
+    cursor: "pointer",
+    textAlign: "left"
+  }}
+>
+  Clienti
+</button>
       <div style={{ marginTop: "auto", opacity: 0.7, fontSize: 12 }}>
         Archivio ordini: <b>{archiveCount}</b>
       </div>
@@ -1672,6 +1714,289 @@ style={{
       </div>
     </main>
   </div>
+) : view === "clienti" ? (
+  <div style={{ padding: 22 }}>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 18
+      }}
+    >
+      <div>
+        <h1 style={{ margin: 0, fontSize: 28, letterSpacing: -0.2 }}>Clienti</h1>
+        <div style={{ opacity: 0.7, marginTop: 4 }}>
+          Panoramica commerciale club
+        </div>
+      </div>
+
+      <button
+        onClick={() => setView("dashboard")}
+        style={{
+          padding: "10px 14px",
+          borderRadius: 10,
+          border: "1px solid #d1d5db",
+          background: "white",
+          fontWeight: 700,
+          cursor: "pointer"
+        }}
+      >
+        ← Dashboard
+      </button>
+    </div>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: 14,
+        marginBottom: 18
+      }}
+    >
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Club in archivio</div>
+        <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>
+          {
+            new Set(
+              archive
+                .map((o) => (o.club || o.client?.name || "").trim())
+                .filter(Boolean)
+            ).size
+          }
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Ordini reali</div>
+        <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>
+          {
+            archive.filter((o) =>
+              ["CONFERMATO", "CONSEGNATO", "CONSEGNA PARZIALE"].includes(o.status)
+            ).length
+          }
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Fatturato reale</div>
+        <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>
+          {euro(
+            archive
+              .filter((o) =>
+                ["CONFERMATO", "CONSEGNATO", "CONSEGNA PARZIALE"].includes(o.status)
+              )
+              .reduce((sum, o) => sum + orderTotalEuro(o), 0)
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Ultimo aggiornamento</div>
+        <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>
+          {new Date().toLocaleDateString("it-IT")}
+        </div>
+      </div>
+    </div>
+
+    <div className="card" style={{ padding: 22 }}>
+      <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
+        Azioni Commerciali
+      </div>
+      <div style={{ opacity: 0.75, lineHeight: 1.5 }}>
+        Sintesi operativa dei club. Identifica clienti PREMIUM,
+        fatturato ultimi 12 mesi, storico totale, profilo cliente, lista
+        clienti da ricontattare, club inattivi da oltre 12 mesi, opportunità di sviluppo commerciale
+      </div>
+    </div>
+    <div className="card" style={{ padding: 22, marginTop: 18 }}>
+  <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 14 }}>
+    Club clienti
+  </div>
+<div style={{ 
+  marginBottom: 16, 
+  padding: 12, 
+  background: "#fff4e5", 
+  border: "1px solid #f5d7a1", 
+  borderRadius: 6,
+  fontSize: 14
+}}>
+  <strong>Clienti da ricontattare</strong> (nessun ordine negli ultimi 12 mesi)
+</div>
+<div style={{
+  display: "grid",
+  gridTemplateColumns: "repeat(3, 1fr)",
+  gap: 16,
+  marginBottom: 20
+}}>
+
+<div style={{
+  background: "#f8fafc",
+  padding: 14,
+  borderRadius: 8,
+  border: "1px solid #e5e7eb"
+}}>
+  <div style={{fontSize:12, opacity:0.7}}>Clienti Premium</div>
+  <div style={{fontSize:20, fontWeight:700}}>
+    {Object.values(
+      archive.reduce((acc:any,o:any)=>{
+        const club=(o.club||o.client?.name||"").trim()
+        if(!club) return acc
+        acc[club]=(acc[club]||0)+orderTotalEuro(o)
+        return acc
+      },{})
+    ).filter((v:any)=>v>10000).length}
+  </div>
+</div>
+
+<div style={{
+  background: "#f8fafc",
+  padding: 14,
+  borderRadius: 8,
+  border: "1px solid #e5e7eb"
+}}>
+  <div style={{fontSize:12, opacity:0.7}}>Clienti da ricontattare</div>
+  <div style={{fontSize:20, fontWeight:700}}>
+    {Object.values(
+      archive.reduce((acc:any,o:any)=>{
+        const club=(o.club||o.client?.name||"").trim()
+        if(!club) return acc
+        const d=new Date(o.createdAtISO||Date.now())
+        acc[club]=acc[club]||{last:d}
+        if(d>acc[club].last) acc[club].last=d
+        return acc
+      },{})
+    ).filter((c:any)=>{
+      const now=new Date()
+      const diff = (now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24 * 365)
+      return diff>1
+    }).length}
+  </div>
+</div>
+
+<div style={{
+  background: "#f8fafc",
+  padding: 14,
+  borderRadius: 8,
+  border: "1px solid #e5e7eb"
+}}>
+  <div style={{fontSize:12, opacity:0.7}}>Ordine più alto</div>
+  <div style={{fontSize:20, fontWeight:700}}>
+    {euro(Math.max(...archive.map(o=>orderTotalEuro(o))))}
+  </div>
+</div>
+
+</div>
+  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <thead>
+      <tr style={{ textAlign: "left", fontSize: 13, opacity: 0.7 }}>
+<th style={{ padding: "10px 6px" }}>Club</th>
+<th>Ordini</th>
+<th>Fatturato totale</th>
+<th>Ultimi 12 mesi</th>
+<th>Ordine max</th>
+<th>Categoria</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {Object.entries(
+        archive.reduce((acc: any, o) => {
+
+          const club = String(o.club || o.client?.name || "Senza nome").trim()
+
+          if (!acc[club]) {
+            acc[club] = {
+              orders: 0,
+              total: 0,
+              last12: 0,
+              lastOrder:  null,
+              maxOrder: 0
+            }
+          }
+
+          acc[club].orders += 1
+          acc[club].total += orderTotalEuro(o)
+const orderValue = orderTotalEuro(o)
+
+if (orderValue > acc[club].maxOrder) {
+  acc[club].maxOrder = orderValue
+}
+
+const orderDate = new Date(o.createdAtISO || o.updatedAtISO || Date.now())
+
+if (!acc[club].lastOrder || orderDate > acc[club].lastOrder) {
+  acc[club].lastOrder = orderDate
+}
+          
+          const lastYear = new Date()
+          lastYear.setFullYear(lastYear.getFullYear() - 1)
+
+          if (orderDate >= lastYear) {
+            acc[club].last12 += orderTotalEuro(o)
+          }
+
+          return acc
+
+        }, {})
+      ).sort((a: any, b: any) => b[1].total - a[1].total).map(([club, data]: any) => {
+
+        let category = "Occasionale"
+
+        const daRicontattare = data.last12 === 0 && data.orders > 0
+
+        if (data.last12 > 10000) category = "Premium"
+        else if (data.last12 > 3000) category = "Core"
+        else if (data.last12 === 0) category = "Inattivo"
+
+        return (
+          <tr
+  key={club}
+  style={{
+    borderTop: "1px solid #eee",
+    background: daRicontattare ? "#fff4e5" : "transparent"
+  }}
+>
+            <td style={{ padding: "10px 6px", fontWeight: 700 }}>
+              {club}
+            </td>
+
+            <td>{data.orders}</td>
+
+            <td>{euro(data.total)}</td>
+
+            <td>{euro(data.last12)}</td>
+
+<td>{euro(data.maxOrder)}</td>
+
+            <td>
+              <span
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  background:
+                    category === "Premium"
+                      ? "#2563eb"
+                      : category === "Core"
+                      ? "#16a34a"
+                      : category === "Occasionale"
+                      ? "#f59e0b"
+                      : "#9ca3af",
+                  color: "white"
+                }}
+              >
+                {category}
+              </span>
+            </td>
+          </tr>
+        )
+      })}
+    </tbody>
+  </table>
+</div>
+  </div>
 ) : view === "orders" ? (
   <div style={{ padding: 22 }}>
     <div
@@ -1830,6 +2155,41 @@ style={{
                   fontSize: 14
                 }}
               >
+<button
+  onClick={() => {
+    setOrder(o);
+    setView("order");
+  }}
+  title="Apri ordine"
+  style={{
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    width: 36,
+    height: 36,
+    marginRight: 8,
+    background: "#ffffff",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "black"
+  }}
+>
+  <svg
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  style={{ display: "block" }}
+>
+  <path
+    d="M3 7.5C3 6.67157 3.67157 6 4.5 6H9L10.5 8H19.5C20.3284 8 21 8.67157 21 9.5V17.5C21 18.3284 20.3284 19 19.5 19H4.5C3.67157 19 3 18.3284 3 17.5V7.5Z"
+    stroke="black"
+    strokeWidth="1.7"
+    strokeLinejoin="round"
+  />
+</svg>
+</button>
                 Riordina
               </button>
             </div>
