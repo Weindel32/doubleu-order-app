@@ -852,9 +852,39 @@ export default function App() {
 });
 
   const [archive, setArchive] = useState<Order[]>(() => safeParse<Order[]>(localStorage.getItem(LS_ARCHIVE)) ?? []);
+  const [selectedClub, setSelectedClub] = useState<string | null>(null);
+  const clubRows = Object.entries(
+  archive.reduce((acc: any, o) => {
+    const club = String(o.club || o.client?.name || "Senza nome").trim();
+
+    if (!acc[club]) {
+      acc[club] = {
+        club,
+        orders: 0,
+        revenue: 0,
+        pieces: 0,
+        lastDate: "",
+      };
+    }
+
+    acc[club].orders += 1;
+    acc[club].revenue += orderTotalEuro(o);
+    acc[club].pieces += orderTotalPieces(o);
+
+    const date = o.updatedAtISO || o.createdAtISO || "";
+    if (!acc[club].lastDate || date > acc[club].lastDate) {
+      acc[club].lastDate = date;
+    }
+
+    return acc;
+  }, {})
+)
+  .map(([, value]: any) => value)
+  .sort((a: any, b: any) => b.revenue - a.revenue);
   const kpiConfirmedOrders = confirmedOrdersCount(archive);
 const kpiConfirmedRevenue = confirmedRevenue(archive);
 const kpiConfirmedPieces = confirmedPieces(archive);
+const topClubs = topClubsByRevenue(archive);
 const kpiConfirmedAverage = confirmedAverageOrder(archive);
 const [payAmount, setPayAmount] = useState("");
 const [payMethod, setPayMethod] = useState("Bonifico");
@@ -927,25 +957,21 @@ function confirmedRevenue(archive: Order[]) {
 function confirmedPieces(archive: Order[]) {
   return realOrdersList(archive).reduce((sum, o) => sum + orderTotalPieces(o), 0);
 }
-function topClubByRevenue(archive: Order[]) {
+function topClubsByRevenue(archive: Order[]) {
   const revenue: Record<string, number> = {};
 
   realOrdersList(archive).forEach((o) => {
-const club = String(o.club || o.client?.name || "Sconosciuto").trim();
-const total = orderTotalEuro(o);
+    const club = String(o.club || o.client?.name || "Sconosciuto").trim();
+    const total = orderTotalEuro(o);
 
-if (!revenue[club]) revenue[club] = 0;
-revenue[club] += total;
+    if (!revenue[club]) revenue[club] = 0;
+    revenue[club] += total;
   });
 
-  const sorted = Object.entries(revenue).sort((a, b) => b[1] - a[1]);
-
-  if (!sorted.length) return null;
-
-  return {
-    club: sorted[0][0],
-    value: sorted[0][1],
-  };
+  return Object.entries(revenue)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([club, value]) => ({ club, value }));
 }
 function confirmedAverageOrder(archive: Order[]) {
   const count = confirmedOrdersCount(archive);
@@ -1546,6 +1572,36 @@ Dashboard
       {kpiConfirmedPieces}
     </div>
   </div>
+  <div className="card" style={{ padding: 16 }}>
+<div className="card" style={{ padding: 16 }}>
+  <div style={{ fontSize: 12, opacity: 0.7 }}>Top 3 club per fatturato</div>
+
+  <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+    {topClubs.length ? (
+      topClubs.map((item, idx) => (
+        <div
+          key={item.club}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>
+            {idx + 1}. {item.club}
+          </div>
+
+          <div style={{ fontWeight: 700 }}>
+            {euro(item.value)}
+          </div>
+        </div>
+      ))
+    ) : (
+      <div style={{ opacity: 0.6 }}>Nessun dato</div>
+    )}
+  </div>
+</div>
+</div>
 
   <div className="card" style={{ padding: 16 }}>
     <div style={{ fontSize: 12, opacity: 0.7 }}>Valore medio ordine</div>
@@ -1745,7 +1801,146 @@ style={{
         ← Dashboard
       </button>
     </div>
+<div className="card" style={{ padding: 16, marginBottom: 18 }}>
+  <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 14 }}>
+    Club clienti
+  </div>
 
+  <div style={{ display: "grid", gap: 10 }}>
+    {clubRows.length ? (
+      clubRows.map((club: any) => (
+        <button
+          key={club.club}
+          onClick={() => setSelectedClub(club.club)}
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 12,
+            background: "white",
+            padding: 14,
+            textAlign: "left",
+            cursor: "pointer"
+          }}
+        >
+          <div style={{ fontSize: 16, fontWeight: 800 }}>
+            {club.club}
+          </div>
+
+          <div style={{ marginTop: 6, opacity: 0.7, fontSize: 13 }}>
+            Ordini: {club.orders} · Pezzi: {club.pieces}
+          </div>
+
+          <div style={{ marginTop: 4, fontSize: 14, fontWeight: 700 }}>
+            {euro(club.revenue)}
+          </div>
+        </button>
+      ))
+    ) : (
+      <div style={{ opacity: 0.6 }}>Nessun club disponibile</div>
+    )}
+  </div>
+</div>
+{selectedClub && (
+  <div className="card" style={{ padding: 18, marginBottom: 18 }}>
+    
+    <div style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 16
+    }}>
+
+      <div>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>
+          {selectedClub}
+        </div>
+        <div style={{ opacity: 0.7 }}>
+          Scheda commerciale club
+        </div>
+      </div>
+
+      <button
+        onClick={() => setSelectedClub(null)}
+        style={{
+          padding: "6px 12px",
+          borderRadius: 8,
+          border: "1px solid #ddd",
+          background: "white",
+          cursor: "pointer"
+        }}
+      >
+        Chiudi
+      </button>
+
+    </div>
+
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(3,1fr)",
+      gap: 14
+    }}>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Fatturato</div>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>
+          {euro(clubRows.find(c => c.club === selectedClub)?.revenue || 0)}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Ordini</div>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>
+          {clubRows.find(c => c.club === selectedClub)?.orders || 0}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Pezzi venduti</div>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>
+          {clubRows.find(c => c.club === selectedClub)?.pieces || 0}
+        </div>
+      </div>
+<div style={{ marginTop: 20 }}>
+  <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 10 }}>
+    Storico ordini
+  </div>
+
+  <div style={{ display: "grid", gap: 8 }}>
+    {archive
+      .filter(o => String(o.club || o.client?.name || "").trim() === selectedClub)
+      .sort((a, b) =>
+        (b.updatedAtISO || b.createdAtISO || "").localeCompare(
+          a.updatedAtISO || a.createdAtISO || ""
+        )
+      )
+      .map(o => (
+        <div
+          key={o.internalId}
+          style={{
+            border: "1px solid #eee",
+            borderRadius: 10,
+            padding: 10,
+            background: "#fafafa"
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>
+            {o.updatedAtISO || o.createdAtISO || "-"}
+          </div>
+
+          <div style={{ fontSize: 13, opacity: 0.7 }}>
+            Pezzi: {orderTotalPieces(o)}
+          </div>
+
+          <div style={{ fontWeight: 700 }}>
+            {euro(orderTotalEuro(o))}
+          </div>
+        </div>
+      ))}
+  </div>
+</div>
+    </div>
+
+  </div>
+)}
     <div
       style={{
         display: "grid",
