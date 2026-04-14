@@ -2625,6 +2625,31 @@ if (!acc[club].lastOrder || orderDate > acc[club].lastOrder) {
     </div>
   </div>
 </div>
+        <div className="card">
+  <div className="card-title">Opzioni PDF Cliente</div>
+
+  <label
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      marginTop: 8,
+      fontWeight: 600,
+      cursor: "pointer"
+    }}
+  >
+    <input
+      type="checkbox"
+      checked={order.showKitTotalOnClientPdf}
+      onChange={(e) => touch({ showKitTotalOnClientPdf: e.target.checked })}
+    />
+    Mostra totale ordine nel PDF cliente
+  </label>
+
+  <div className="hint" style={{ marginTop: 8 }}>
+    Se attivo, nel PDF cliente verrà mostrato il totale ordine. Se disattivo, il PDF mostrerà solo il dettaglio articoli e taglie.
+  </div>
+</div>
 {/* --- PAGAMENTI --- */}
 <div className="card">
   <div className="card-title">Pagamenti</div>
