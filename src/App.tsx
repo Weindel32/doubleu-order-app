@@ -720,7 +720,6 @@ doc.text(
   } else {
     doc.save(`DOUBLEU_ordine_${order.club || "Cliente"}_${fmtITDate(order.updatedAtISO)}.pdf`);
   }
-}
 
 
 function makeProductionPDF(order: Order, mode: PdfMode) {
