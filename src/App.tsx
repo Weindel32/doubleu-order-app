@@ -721,7 +721,6 @@ doc.text(
     doc.save(`DOUBLEU_ordine_${order.club || "Cliente"}_${fmtITDate(order.updatedAtISO)}.pdf`);
   }
 
-}
 
 function makeProductionPDF(order: Order, mode: PdfMode) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
