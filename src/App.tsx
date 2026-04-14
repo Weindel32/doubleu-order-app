@@ -346,20 +346,25 @@ function makeClientPDF(order: Order, mode: PdfMode) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   // --- Totale ordine (da KIT) - opzionale ---
-const hasKitPrice =
-  (order.kitUnitPrice || 0) > 0 &&
-  (order.kitQty || 0) > 0;
+const commercialSubtotal = (order.commercialRows || []).reduce(
+  (acc, row) => acc + (Number(row.price) || 0) * (Number(row.qty) || 0),
+  0
+);
+
+const commercialVatAmount = order.vatEnabled
+  ? commercialSubtotal * ((Number(order.vatRate) || 0) / 100)
+  : 0;
+
+const commercialGrandTotal = commercialSubtotal + commercialVatAmount;
+
+const hasCommercialTotal = commercialSubtotal > 0;
 
 console.log("PDF CLIENT", {
-  kitUnitPrice: order.kitUnitPrice,
-  kitQty: order.kitQty,
+  commercialSubtotal,
+  commercialGrandTotal,
   show: order.showKitTotalOnClientPdf,
-  hasKitPrice,
+  hasCommercialTotal,
 });
-if (hasKitPrice) {
-  // Totale KIT: lo stampiamo più sotto (sotto "DETTAGLIO ORDINE") per evitare sovrapposizioni
-}
-
   // NON stampare qui
   // lo stampiamo più sotto, sotto "DETTAGLIO ORDINE"
 
@@ -371,10 +376,6 @@ doc.setFont("helvetica", "normal");
 
   doc.setFont("helvetica", "normal");
 
-if (hasKitPrice) {
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.setTextColor(25, 35, 50);
 
 
 
@@ -460,20 +461,19 @@ doc.setDrawColor(220, 220, 220);
 doc.setLineWidth(0.5);
 doc.line(margin, y + 6, margin + contentW, y + 6);
 // Totale ordine sotto la linea, a destra
-if (order.showKitTotalOnClientPdf && hasKitPrice) {
-  const subtotal = kitSubtotal(order);
-  const total = kitTotal(order);
+const hasCommercialTotal = commercialSubtotal > 0;
+
+if (order.showKitTotalOnClientPdf && hasCommercialTotal) {
   const euro = (n: number) => n.toFixed(2).replace(".", ",");
 
   const text = order.vatEnabled
-    ? `Totale ordine (IVA incl.): € ${euro(total)}`
-    : `Totale ordine: € ${euro(subtotal)}`;
+    ? `Totale ordine (IVA incl.): € ${euro(commercialGrandTotal)}`
+    : `Totale ordine: € ${euro(commercialSubtotal)}`;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   doc.setTextColor(25, 35, 50);
 
-  // y + 18 = sotto la linea (linea è a y+6)
   doc.text(text, margin + contentW, y + 18, { align: "right" });
 
   doc.setTextColor(0, 0, 0);
