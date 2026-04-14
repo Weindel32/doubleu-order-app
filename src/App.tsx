@@ -461,7 +461,7 @@ doc.setDrawColor(220, 220, 220);
 doc.setLineWidth(0.5);
 doc.line(margin, y + 6, margin + contentW, y + 6);
 // Totale ordine sotto la linea, a destra
-if (order.showKitTotalOnClientPdf && commercialSubtotal > 0) {
+if (order.showKitTotalOnClientPdf) {
   const euro = (n: number) => n.toFixed(2).replace(".", ",");
 
   const text = order.vatEnabled
