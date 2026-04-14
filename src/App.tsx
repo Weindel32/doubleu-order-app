@@ -461,21 +461,11 @@ doc.setDrawColor(220, 220, 220);
 doc.setLineWidth(0.5);
 doc.line(margin, y + 6, margin + contentW, y + 6);
 // Totale ordine sotto la linea, a destra
-if (order.showKitTotalOnClientPdf) {
-  const euro = (n: number) => n.toFixed(2).replace(".", ",");
-
-  const text = order.vatEnabled
-    ? `Totale ordine (IVA incl.): € ${euro(commercialGrandTotal)}`
-    : `Totale ordine: € ${euro(commercialSubtotal)}`;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.setTextColor(25, 35, 50);
-
-  doc.text(text, margin + contentW, y + 18, { align: "right" });
-
-  doc.setTextColor(0, 0, 0);
-}
+doc.setFont("helvetica", "bold");
+doc.setFontSize(11);
+doc.setTextColor(255, 0, 0);
+doc.text("TEST TOTALE PDF", margin + contentW, y + 18, { align: "right" });
+doc.setTextColor(0, 0, 0);
 // Reset
 doc.setFontSize(11);
 doc.setTextColor(0, 0, 0);
