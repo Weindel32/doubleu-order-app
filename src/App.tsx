@@ -714,7 +714,7 @@ doc.text(
 
 
 
-  // --- Output finale ---
+  // --- Output finale PDF cliente ---
   if (mode === "print") {
     openBlobForPrint(doc);
   } else {
